@@ -4,6 +4,10 @@
  * The background task can fire while the screen is locked, outside the React lifecycle,
  * so run data lives here in a module-level store instead of component state. The UI reads
  * it with `useSyncExternalStore(subscribe, getSnapshot)`.
+ *
+ * Run states: ready (`!isActive`), running (`isActive && !isPaused`), paused
+ * (`isActive && isPaused`), and finished (`!isActive` with an `endTime`).
+ * While paused, GPS is switched off and no distance or time is counted.
  */
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Location from 'expo-location';
@@ -23,17 +27,29 @@ type TrackPoint = {
 };
 
 export type RunSnapshot = {
+  /** True from start until stop, including while paused. */
   isActive: boolean;
+  isPaused: boolean;
   startTime: number | null;
   endTime: number | null;
+  /** When the current pause began. */
+  pausedAt: number | null;
+  /** Total time spent paused in completed pauses. */
+  pausedMs: number;
+  /** GPS fixes from before this moment are ignored (run start or latest resume). */
+  trackingSince: number | null;
   distanceMeters: number;
   lastPoint: TrackPoint | null;
 };
 
 let snapshot: RunSnapshot = {
   isActive: false,
+  isPaused: false,
   startTime: null,
   endTime: null,
+  pausedAt: null,
+  pausedMs: 0,
+  trackingSince: null,
   distanceMeters: 0,
   lastPoint: null,
 };
@@ -56,6 +72,13 @@ export function getSnapshot() {
   return snapshot;
 }
 
+/** Running time so far, excluding pauses. Frozen while paused and after the run ends. */
+export function getActiveElapsedMs(run: RunSnapshot, now: number) {
+  if (run.startTime === null) return 0;
+  const end = run.endTime ?? (run.isPaused && run.pausedAt !== null ? run.pausedAt : now);
+  return Math.max(0, end - run.startTime - run.pausedMs);
+}
+
 // Haversine distance between two coordinates, in metres.
 function distanceBetween(a: TrackPoint, b: TrackPoint) {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -70,16 +93,16 @@ function distanceBetween(a: TrackPoint, b: TrackPoint) {
 // Single entry point for GPS fixes, whether they come from the foreground watcher
 // or from the background task (which can deliver several fixes at once).
 function addLocations(locations: Location.LocationObject[]) {
-  if (!snapshot.isActive || snapshot.startTime === null) return;
+  if (!snapshot.isActive || snapshot.isPaused || snapshot.trackingSince === null) return;
 
   let { distanceMeters, lastPoint } = snapshot;
 
   for (const location of locations) {
     const { latitude, longitude, accuracy } = location.coords;
 
-    // Skip imprecise fixes and cached fixes from before the run started.
+    // Skip imprecise fixes, and cached or late fixes from before the run started or resumed.
     if (accuracy == null || accuracy > MAX_ACCURACY_M) continue;
-    if (location.timestamp < snapshot.startTime) continue;
+    if (location.timestamp < snapshot.trackingSince) continue;
 
     const point = { latitude, longitude, timestamp: location.timestamp };
     if (!lastPoint) {
@@ -134,58 +157,117 @@ async function stopBackgroundUpdates() {
   }
 }
 
+function stopForegroundWatcher() {
+  foregroundSubscription?.remove();
+  foregroundSubscription = null;
+}
+
+/**
+ * Switches GPS on. Uses background location updates when available so tracking survives a
+ * screen lock, otherwise the foreground-only watcher. Always clears any existing
+ * subscription first, so there is never more than one source of fixes.
+ */
+async function startLocationTracking() {
+  stopForegroundWatcher();
+  await stopBackgroundUpdates();
+
+  if (await canTrackInBackground()) {
+    try {
+      // On iOS a run started from the app only needs "While Using" permission;
+      // the blue status-bar indicator shows while it continues in the background.
+      await Location.startLocationUpdatesAsync(RUN_LOCATION_TASK, {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: 5,
+        activityType: Location.ActivityType.Fitness,
+        pausesUpdatesAutomatically: false,
+        showsBackgroundLocationIndicator: true,
+      });
+      return;
+    } catch {
+      // Fall through to the foreground watcher.
+    }
+  }
+
+  foregroundSubscription = await Location.watchPositionAsync(
+    { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: MIN_SEGMENT_M },
+    (location) => addLocations([location]),
+  );
+}
+
 /**
  * Starts a new run. Requires foreground location permission to already be granted.
- * Uses background location updates when available so tracking survives a screen lock,
- * otherwise falls back to the foreground-only watcher.
  */
 export async function startRun() {
   // Clear anything left over so a new run never double-counts.
   await stopRun();
 
+  const now = Date.now();
   update({
     isActive: true,
-    startTime: Date.now(),
+    isPaused: false,
+    startTime: now,
     endTime: null,
+    pausedAt: null,
+    pausedMs: 0,
+    trackingSince: now,
     distanceMeters: 0,
     lastPoint: null,
   });
 
   try {
-    if (await canTrackInBackground()) {
-      try {
-        // On iOS a run started from the app only needs "While Using" permission;
-        // the blue status-bar indicator shows while it continues in the background.
-        await Location.startLocationUpdatesAsync(RUN_LOCATION_TASK, {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: 5,
-          activityType: Location.ActivityType.Fitness,
-          pausesUpdatesAutomatically: false,
-          showsBackgroundLocationIndicator: true,
-        });
-        return;
-      } catch {
-        // Fall through to the foreground watcher.
-      }
-    }
-
-    foregroundSubscription = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: MIN_SEGMENT_M },
-      (location) => addLocations([location]),
-    );
+    await startLocationTracking();
   } catch (error) {
     await stopRun();
     throw error;
   }
 }
 
-/** Stops all location updates and freezes the final stats. */
+/** Pauses an active run: GPS off, distance and time frozen. */
+export async function pauseRun() {
+  if (!snapshot.isActive || snapshot.isPaused) return;
+  // Mark paused first so any fix already in flight is ignored.
+  update({ isPaused: true, pausedAt: Date.now(), lastPoint: null });
+  stopForegroundWatcher();
+  await stopBackgroundUpdates();
+}
+
+/**
+ * Resumes a paused run from the same distance and time. The paused period isn't counted,
+ * and the first fix after resuming starts a fresh segment, so moving while paused never
+ * adds distance.
+ */
+export async function resumeRun() {
+  if (!snapshot.isActive || !snapshot.isPaused || snapshot.pausedAt === null) return;
+  const now = Date.now();
+  update({
+    isPaused: false,
+    pausedAt: null,
+    pausedMs: snapshot.pausedMs + (now - snapshot.pausedAt),
+    trackingSince: now,
+    lastPoint: null,
+  });
+
+  try {
+    await startLocationTracking();
+  } catch (error) {
+    // Couldn't restart GPS (e.g. permission revoked): stay paused rather than counting time.
+    update({ isPaused: true, pausedAt: Date.now() });
+    throw error;
+  }
+}
+
+/** Finishes the run: stops all location updates and freezes the final stats. */
 export async function stopRun() {
-  foregroundSubscription?.remove();
-  foregroundSubscription = null;
+  stopForegroundWatcher();
 
   if (snapshot.isActive) {
-    update({ isActive: false, endTime: Date.now() });
+    const now = Date.now();
+    // Stopping while paused: the current pause doesn't count as running time.
+    const pausedMs =
+      snapshot.isPaused && snapshot.pausedAt !== null
+        ? snapshot.pausedMs + (now - snapshot.pausedAt)
+        : snapshot.pausedMs;
+    update({ isActive: false, isPaused: false, pausedAt: null, pausedMs, endTime: now });
   }
 
   await stopBackgroundUpdates();
@@ -196,5 +278,15 @@ export async function stopRun() {
  * since their run data is gone and nothing would ever stop them.
  */
 export async function stopOrphanedTracking() {
-  if (!snapshot.isActive) await stopBackgroundUpdates();
+  if (!snapshot.isActive || snapshot.isPaused) await stopBackgroundUpdates();
+}
+
+/**
+ * TEMPORARY, DEV ONLY: adds distance to the active run so the reward flow can be
+ * tested without running. Remove before release.
+ */
+export function simulateDistanceForTesting(meters: number) {
+  // Only running distance counts, so this does nothing while paused.
+  if (!__DEV__ || !snapshot.isActive || snapshot.isPaused) return;
+  update({ distanceMeters: snapshot.distanceMeters + meters });
 }

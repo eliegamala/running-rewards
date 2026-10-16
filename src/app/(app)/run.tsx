@@ -12,24 +12,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Fonts, Spacing } from '@/constants/theme';
-import { getSnapshot, startRun, stopOrphanedTracking, stopRun, subscribe } from '@/lib/run-tracker';
-
-const MIN_PACE_DISTANCE_KM = 0.05; // pace is meaningless over the first few metres
-
-function formatDuration(totalSeconds: number) {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-  const seconds = String(totalSeconds % 60).padStart(2, '0');
-  return hours > 0 ? `${hours}:${minutes}:${seconds}` : `${minutes}:${seconds}`;
-}
-
-function formatPace(elapsedSeconds: number, distanceKm: number) {
-  if (distanceKm < MIN_PACE_DISTANCE_KM) return '--:--';
-  const secondsPerKm = Math.round(elapsedSeconds / distanceKm);
-  if (secondsPerKm >= 100 * 60) return '--:--';
-  return `${Math.floor(secondsPerKm / 60)}:${String(secondsPerKm % 60).padStart(2, '0')}`;
-}
+import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
+import { formatDuration, formatPace } from '@/lib/run-format';
+import {
+  getActiveElapsedMs,
+  getSnapshot,
+  pauseRun,
+  resumeRun,
+  simulateDistanceForTesting,
+  startRun,
+  stopOrphanedTracking,
+  stopRun,
+  subscribe,
+} from '@/lib/run-tracker';
 
 function showPermissionAlert(canAskAgain: boolean) {
   const message =
@@ -50,36 +45,11 @@ function showPermissionAlert(canAskAgain: boolean) {
   );
 }
 
-const Palette = {
-  light: {
-    background: '#F6F2C8',
-    card: '#FFFDF0',
-    hero: '#2F5130',
-    heroText: '#F6F2C8',
-    heroMuted: 'rgba(246, 242, 200, 0.6)',
-    accent: '#DCE85A',
-    accentText: '#22381F',
-    text: '#22381F',
-    textMuted: '#6E7A5A',
-  },
-  dark: {
-    background: '#121410',
-    card: '#1D211A',
-    hero: '#2F5130',
-    heroText: '#F6F2C8',
-    heroMuted: 'rgba(246, 242, 200, 0.6)',
-    accent: '#DCE85A',
-    accentText: '#1A2A17',
-    text: '#F6F2C8',
-    textMuted: '#9CA58A',
-  },
-} as const;
-
 type StatCardProps = {
   label: string;
   value: string;
   unit: string;
-  colors: (typeof Palette)['light' | 'dark'];
+  colors: PaletteColors;
 };
 
 function StatCard({ label, value, unit, colors }: StatCardProps) {
@@ -107,16 +77,25 @@ export default function RunScreen() {
 
   const run = useSyncExternalStore(subscribe, getSnapshot);
   const isRunning = run.isActive;
-  const isStartingRef = useRef(false);
+  const isPaused = run.isActive && run.isPaused;
+  const isTicking = isRunning && !isPaused;
+  // Prevents double taps from starting, pausing or stopping twice.
+  const isBusyRef = useRef(false);
 
-  // Re-render twice a second while running; time is derived from the start timestamp,
-  // so the clock stays correct after the screen has been locked.
+  // Re-render twice a second while running; time is derived from timestamps, so the clock
+  // stays correct after the screen has been locked. It stops ticking while paused.
   const [now, setNow] = useState(0);
   useEffect(() => {
-    if (!isRunning) return;
-    const id = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(id);
-  }, [isRunning]);
+    if (!isTicking) return;
+    const tick = () => setNow(Date.now());
+    const id = setInterval(tick, 500);
+    // Refresh straight away on resume so the clock doesn't briefly show a stale time.
+    const first = setTimeout(tick, 0);
+    return () => {
+      clearInterval(id);
+      clearTimeout(first);
+    };
+  }, [isTicking]);
 
   // Clean up GPS left over from a previous session, and never leave it running
   // if the screen goes away mid-run.
@@ -127,9 +106,37 @@ export default function RunScreen() {
     };
   }, []);
 
+  const runExclusive = async (action: () => Promise<void>) => {
+    if (isBusyRef.current) return;
+    isBusyRef.current = true;
+    try {
+      await action();
+    } finally {
+      isBusyRef.current = false;
+    }
+  };
+
+  const handleStopRun = () => runExclusive(stopRun);
+
+  const handlePauseResume = () =>
+    runExclusive(async () => {
+      if (!isPaused) {
+        await pauseRun();
+        return;
+      }
+      try {
+        await resumeRun();
+      } catch {
+        Alert.alert(
+          'Unable to resume GPS',
+          'Make sure Location Services and location access are on, then try again.',
+        );
+      }
+    });
+
   const handleStartRun = async () => {
-    if (isStartingRef.current) return;
-    isStartingRef.current = true;
+    if (isBusyRef.current) return;
+    isBusyRef.current = true;
 
     try {
       const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
@@ -145,23 +152,23 @@ export default function RunScreen() {
         'Make sure Location Services are turned on in Settings, then try again.',
       );
     } finally {
-      isStartingRef.current = false;
+      isBusyRef.current = false;
     }
   };
 
-  const elapsedMs = run.startTime === null ? 0 : (run.endTime ?? now) - run.startTime;
+  const elapsedMs = getActiveElapsedMs(run, now);
   const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   const distanceKm = run.distanceMeters / 1000;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
           <Text style={[styles.wordmark, { color: colors.text }]}>RUN</Text>
           <View style={[styles.statusPill, { backgroundColor: colors.card }]}>
             <View style={[styles.statusDot, { backgroundColor: colors.textMuted }]} />
             <Text style={[styles.statusText, { color: colors.textMuted }]}>
-              {isRunning ? 'Running' : 'Ready'}
+              {isPaused ? 'Paused' : isRunning ? 'Running' : 'Ready'}
             </Text>
           </View>
         </View>
@@ -180,7 +187,9 @@ export default function RunScreen() {
               adjustsFontSizeToFit>
               {formatDuration(elapsedSeconds)}
             </Text>
-            <Text style={[styles.heroCaption, { color: colors.heroMuted }]}>Elapsed</Text>
+            <Text style={[styles.heroCaption, { color: colors.heroMuted }]}>
+              {isPaused ? 'Paused' : 'Elapsed'}
+            </Text>
           </View>
 
           <View style={styles.statsRow}>
@@ -194,8 +203,27 @@ export default function RunScreen() {
           </View>
         </View>
 
+        {isRunning && (
+          <Pressable
+            onPress={handlePauseResume}
+            accessibilityRole="button"
+            accessibilityLabel={isPaused ? 'Resume run' : 'Pause run'}
+            style={({ pressed }) => [
+              styles.pauseButton,
+              isPaused
+                ? { backgroundColor: colors.hero, borderColor: colors.hero }
+                : { borderColor: colors.text },
+              pressed && styles.startButtonPressed,
+            ]}>
+            <Text
+              style={[styles.pauseButtonText, { color: isPaused ? colors.heroText : colors.text }]}>
+              {isPaused ? 'RESUME RUN' : 'PAUSE RUN'}
+            </Text>
+          </Pressable>
+        )}
+
         <Pressable
-          onPress={isRunning ? stopRun : handleStartRun}
+          onPress={isRunning ? handleStopRun : handleStartRun}
           accessibilityRole="button"
           accessibilityLabel={isRunning ? 'Stop run' : 'Start run'}
           style={({ pressed }) => [
@@ -207,6 +235,18 @@ export default function RunScreen() {
             {isRunning ? 'STOP RUN' : 'START RUN'}
           </Text>
         </Pressable>
+
+        {/* TEMPORARY dev-only test control. Remove before release. */}
+        {__DEV__ && isTicking && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => simulateDistanceForTesting(5000)}
+            style={[styles.devButton, { borderColor: colors.textMuted }]}>
+            <Text style={[styles.devButtonText, { color: colors.textMuted }]}>
+              DEV · Simulate 5 km
+            </Text>
+          </Pressable>
+        )}
       </SafeAreaView>
     </View>
   );
@@ -316,6 +356,33 @@ const styles = StyleSheet.create({
   startButtonPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
+  },
+  devButton: {
+    alignSelf: 'center',
+    marginTop: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+  },
+  devButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  pauseButton: {
+    height: 56,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.three,
+  },
+  pauseButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 2,
   },
   startButtonText: {
     fontSize: 18,

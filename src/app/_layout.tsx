@@ -1,18 +1,43 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { useSyncExternalStore } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { RewardCelebration } from '@/components/reward-celebration';
+import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
+// Registers the background location task at startup, as TaskManager requires.
+import '@/lib/run-tracker';
+// Starts recording reward events so Profile history is complete.
+import '@/lib/reward-history';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function TabLayout() {
+export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const auth = useSyncExternalStore(subscribeToAuth, getAuthState);
+  const canEnterApp = auth.status === 'signedIn' || auth.devPreview;
+
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
-      <AppTabs />
+      {/* Wait for a saved session to be restored, so returning runners skip Welcome. */}
+      {auth.status !== 'loading' && (
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Protected guard={!canEnterApp}>
+            <Stack.Screen name="welcome" />
+            <Stack.Screen name="sign-up" />
+            <Stack.Screen name="log-in" />
+            <Stack.Screen name="forgot-password" />
+          </Stack.Protected>
+          <Stack.Protected guard={canEnterApp}>
+            <Stack.Screen name="(app)" />
+            <Stack.Screen name="connect-strava" />
+            <Stack.Screen name="strava-callback" />
+          </Stack.Protected>
+        </Stack>
+      )}
+      {canEnterApp && <RewardCelebration />}
     </ThemeProvider>
   );
 }

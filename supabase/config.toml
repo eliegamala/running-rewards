@@ -1,0 +1,17 @@
+# Supabase CLI configuration for this project. Settings not listed use the CLI defaults.
+project_id = "running-rewards-app"
+
+# All three functions verify callers themselves:
+#   strava          → checks the user's Supabase session with Supabase Auth in code
+#   strava-callback → Strava's browser redirect; protected by the single-use OAuth state
+#   strava-webhook  → Strava's servers; protected by a secret key in the callback URL
+# The platform JWT check is off because Strava can't send a Supabase JWT, and because
+# in-code verification works with both legacy and new (asymmetric) JWT signing keys.
+[functions.strava]
+verify_jwt = false
+
+[functions.strava-callback]
+verify_jwt = false
+
+[functions.strava-webhook]
+verify_jwt = false

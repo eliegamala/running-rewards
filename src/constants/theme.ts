@@ -63,3 +63,37 @@ export const Spacing = {
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
+
+/** Brand palette shared by the app's screens. */
+export const Palette = {
+  light: {
+    background: '#F6F2C8',
+    card: '#FFFDF0',
+    hero: '#2F5130',
+    heroText: '#F6F2C8',
+    heroMuted: 'rgba(246, 242, 200, 0.6)',
+    accent: '#DCE85A',
+    accentText: '#22381F',
+    text: '#22381F',
+    textMuted: '#6E7A5A',
+    canvas: '#FAF8F0',
+    surface: '#EDEADB',
+    border: 'rgba(34, 56, 31, 0.12)',
+  },
+  dark: {
+    background: '#121410',
+    card: '#1D211A',
+    hero: '#2F5130',
+    heroText: '#F6F2C8',
+    heroMuted: 'rgba(246, 242, 200, 0.6)',
+    accent: '#DCE85A',
+    accentText: '#1A2A17',
+    text: '#F6F2C8',
+    textMuted: '#9CA58A',
+    canvas: '#121410',
+    surface: '#23281F',
+    border: 'rgba(246, 242, 200, 0.12)',
+  },
+} as const;
+
+export type PaletteColors = (typeof Palette)['light' | 'dark'];

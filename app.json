@@ -26,13 +26,21 @@
     "plugins": [
       "expo-router",
       [
+        "expo-location",
+        {
+          "isIosBackgroundLocationEnabled": true,
+          "locationWhenInUsePermission": "RUN uses your location to measure distance and pace during a run, including while your screen is locked."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
