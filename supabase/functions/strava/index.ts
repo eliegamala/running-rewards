@@ -27,7 +27,8 @@ import {
   sha256Hex,
   STATE_TTL_MS,
   SYNC_COOLDOWN_MS,
-  SYNC_WINDOW_DAYS,
+  SYNC_PAGE_SIZE,
+  syncAfterEpoch,
   type ActivityRecord,
 } from '../_shared/strava-logic.ts';
 import { getValidAccessToken, StravaNotConnectedError } from '../_shared/tokens.ts';
@@ -72,6 +73,16 @@ async function status(ctx: ServerContext, userId: string) {
 async function sync(ctx: ServerContext, userId: string) {
   const store = createTokenStore(ctx.admin);
   const now = Date.now();
+
+  // Check the cooldown before anything that could call Strava (including a token refresh).
+  const existing = await store.loadConnection(userId);
+  if (existing?.status === 'connected' && isInSyncCooldown(existing.last_synced_at, now)) {
+    const retryAfter = Math.ceil(
+      (SYNC_COOLDOWN_MS - (now - Date.parse(existing.last_synced_at!))) / 1000,
+    );
+    return json({ error: 'cooldown', retryAfter }, 429);
+  }
+
   const { accessToken, connection } = await getValidAccessToken(userId, {
     store,
     api: ctx.api,
@@ -79,17 +90,19 @@ async function sync(ctx: ServerContext, userId: string) {
     now: () => now,
   });
 
-  if (isInSyncCooldown(connection.last_synced_at, now)) {
-    const retryAfter = Math.ceil(
-      (SYNC_COOLDOWN_MS - (now - Date.parse(connection.last_synced_at!))) / 1000,
-    );
-    return json({ error: 'cooldown', retryAfter }, 429);
-  }
+  // Incremental: only activities since the newest one already stored.
+  const { data: latest } = await ctx.admin
+    .from('strava_activities')
+    .select('start_date')
+    .eq('user_id', userId)
+    .order('start_date', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  const after = syncAfterEpoch(latest?.start_date ?? null, now);
 
-  const after = Math.floor(now / 1000) - SYNC_WINDOW_DAYS * 24 * 60 * 60;
   let raw: unknown[];
   try {
-    raw = await ctx.api.listActivities(accessToken, after, 50);
+    raw = await ctx.api.listActivities(accessToken, after, SYNC_PAGE_SIZE);
   } catch (error) {
     if (error instanceof StravaApiError && error.kind === 'unauthorized') {
       await store.markRevoked(userId);

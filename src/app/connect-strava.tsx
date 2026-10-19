@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useState, useSyncExternalStore } from 'react';
 
 import { AuthScreen, Notice, PrimaryButton, SecondaryButton } from '@/components/auth-ui';
+import { StravaBrand } from '@/constants/theme';
 import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
 import { finishStravaStep } from '@/lib/onboarding';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
@@ -47,7 +48,7 @@ export default function ConnectStravaScreen() {
     <AuthScreen
       lead="Connect"
       accent="Strava."
-      intro={`Keep tracking runs in Strava. We only ask to read your activities, so we can spot qualifying ${REWARD_DISTANCE_KM} km runs.`}>
+      intro={`Keep tracking runs in Strava. We only ask to read your activities, so we can spot qualifying ${REWARD_DISTANCE_KM} km runs and walks.`}>
       {strava.status === 'revoked' && (
         <Notice title="RECONNECT NEEDED">
           Strava access was withdrawn. Connect again to keep your runs in sync.
@@ -58,7 +59,12 @@ export default function ConnectStravaScreen() {
           {message}
         </Notice>
       )}
-      <PrimaryButton label="CONNECT STRAVA" onPress={connect} loading={connecting} />
+      <PrimaryButton
+        label="CONNECT STRAVA"
+        onPress={connect}
+        loading={connecting}
+        tint={{ background: StravaBrand.orange, text: StravaBrand.onOrange }}
+      />
       <SecondaryButton label="SKIP FOR NOW" onPress={leave} />
     </AuthScreen>
   );

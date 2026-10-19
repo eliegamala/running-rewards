@@ -120,7 +120,7 @@ export function messageFor(error: string, retryAfter?: number) {
     case 'rate_limited':
       return `Strava is busy right now. Please try again${retryAfter ? ` in about ${Math.ceil(retryAfter / 60)} min` : ' later'}.`;
     case 'cooldown':
-      return `You just synced. Try again in ${retryAfter ?? 30} seconds.`;
+      return `Already up to date. You can sync again in ${Math.max(1, Math.ceil((retryAfter ?? 300) / 60))} min.`;
     case 'network':
       return "Couldn't reach the server. Check your connection and try again.";
     case 'strava_unavailable':
@@ -132,8 +132,17 @@ export function messageFor(error: string, retryAfter?: number) {
   }
 }
 
-export async function refreshStravaStatus() {
+// Status comes from our own database (never Strava), but avoid repeat calls anyway.
+const STATUS_CACHE_MS = 60 * 1000;
+let lastStatusCheck = 0;
+
+/** Re-reads the connection status. Cached briefly unless `force` (after any change). */
+export async function refreshStravaStatus({ force = false }: { force?: boolean } = {}) {
   if (!supabase || getAuthState().status !== 'signedIn') return;
+  if (!force && state.status !== 'unknown' && state.status !== 'error' && Date.now() - lastStatusCheck < STATUS_CACHE_MS) {
+    return;
+  }
+  lastStatusCheck = Date.now();
   const result = await callStrava({ action: 'status' });
   if (!result.ok) {
     update({ status: 'error' });
@@ -165,7 +174,7 @@ export async function connectStrava(): Promise<ActionResult> {
   if (typeof authorizeUrl !== 'string') return { ok: false, message: messageFor('server_error') };
 
   const result = await WebBrowser.openAuthSessionAsync(authorizeUrl, returnUrl);
-  await refreshStravaStatus();
+  await refreshStravaStatus({ force: true });
   if (state.status === 'connected') return { ok: true };
 
   if (result.type !== 'success') {
@@ -192,10 +201,12 @@ export async function loadStravaActivities() {
 export async function syncStrava(): Promise<ActionResult> {
   const result = await callStrava({ action: 'sync' });
   if (!result.ok) {
-    if (result.error === 'revoked' || result.error === 'not_connected') await refreshStravaStatus();
+    if (result.error === 'revoked' || result.error === 'not_connected') {
+      await refreshStravaStatus({ force: true });
+    }
     return { ok: false, message: messageFor(result.error, result.retryAfter) };
   }
-  await Promise.all([refreshStravaStatus(), loadStravaActivities()]);
+  await Promise.all([refreshStravaStatus({ force: true }), loadStravaActivities()]);
   return { ok: true };
 }
 
@@ -203,7 +214,7 @@ export async function disconnectStrava(): Promise<ActionResult> {
   const result = await callStrava({ action: 'disconnect' });
   if (!result.ok) return { ok: false, message: messageFor(result.error) };
   update({ activities: null });
-  await refreshStravaStatus();
+  await refreshStravaStatus({ force: true });
   return { ok: true };
 }
 
@@ -215,11 +226,12 @@ subscribeToAuth(() => {
   lastUserId = userId;
   state = INITIAL;
   listeners.forEach((listener) => listener());
-  if (userId) void refreshStravaStatus();
+  lastStatusCheck = 0;
+  if (userId) void refreshStravaStatus({ force: true });
 });
 
 // A session restored before this module loaded doesn't trigger the listener above.
 if (getAuthState().userId) {
   lastUserId = getAuthState().userId;
-  void refreshStravaStatus();
+  void refreshStravaStatus({ force: true });
 }

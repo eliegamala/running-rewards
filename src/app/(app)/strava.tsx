@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Notice, PrimaryButton, SecondaryButton, usePalette } from '@/components/auth-ui';
-import { Fonts, Spacing } from '@/constants/theme';
+import { Fonts, Spacing, StravaBrand } from '@/constants/theme';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
 import {
   canSeePrivateActivities,
@@ -23,6 +23,8 @@ import {
   subscribe as subscribeToStrava,
   syncStrava,
 } from '@/lib/strava';
+
+const STRAVA_TINT = { background: StravaBrand.orange, text: StravaBrand.onOrange };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -102,12 +104,12 @@ export default function StravaScreen() {
           <View
             style={[
               styles.statusChip,
-              { backgroundColor: isConnected ? colors.accent : 'rgba(246, 242, 200, 0.14)' },
+              { backgroundColor: isConnected ? StravaBrand.orange : 'rgba(246, 242, 200, 0.14)' },
             ]}>
             <Text
               style={[
                 styles.statusChipText,
-                { color: isConnected ? colors.accentText : colors.heroText },
+                { color: isConnected ? StravaBrand.onOrange : colors.heroText },
               ]}>
               {STATUS_LABELS[strava.status]}
             </Text>
@@ -140,13 +142,25 @@ export default function StravaScreen() {
         <View style={styles.actions}>
           {isConnected ? (
             <>
-              <PrimaryButton label="SYNC NOW" onPress={sync} loading={busy === 'sync'} />
+              <PrimaryButton
+                label="SYNC NOW"
+                onPress={sync}
+                loading={busy === 'sync'}
+                tint={STRAVA_TINT}
+              />
               <SecondaryButton label="DISCONNECT" onPress={confirmDisconnect} />
             </>
           ) : strava.status === 'error' ? (
-            <SecondaryButton label="TRY AGAIN" onPress={() => void refreshStravaStatus()} />
+            <SecondaryButton
+              label="TRY AGAIN"
+              onPress={() => void refreshStravaStatus({ force: true })}
+            />
           ) : strava.status !== 'unavailable' && strava.status !== 'unknown' ? (
-            <PrimaryButton label="CONNECT STRAVA" onPress={() => router.push('/connect-strava')} />
+            <PrimaryButton
+              label="CONNECT STRAVA"
+              onPress={() => router.push('/connect-strava')}
+              tint={STRAVA_TINT}
+            />
           ) : null}
         </View>
 
@@ -154,8 +168,9 @@ export default function StravaScreen() {
           <>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>LIVE FROM STRAVA</Text>
             <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
-              Your activities from the last 30 days. Qualifying {REWARD_DISTANCE_KM} km runs are
-              marked; they don&apos;t unlock rewards yet.
+              Your activities from the last 30 days. Recorded runs and walks of{' '}
+              {REWARD_DISTANCE_KM} km or more are marked as qualifying; they don&apos;t unlock
+              rewards yet.
             </Text>
 
             {strava.activities === null ? (
@@ -187,8 +202,10 @@ export default function StravaScreen() {
                       {(activity.distance_m / 1000).toFixed(2)} km
                     </Text>
                     {activity.qualifies && (
-                      <View style={[styles.pill, { backgroundColor: colors.accent }]}>
-                        <Text style={[styles.pillText, { color: colors.accentText }]}>QUALIFIES</Text>
+                      <View style={[styles.pill, { backgroundColor: StravaBrand.orange }]}>
+                        <Text style={[styles.pillText, { color: StravaBrand.onOrange }]}>
+                          QUALIFIES
+                        </Text>
                       </View>
                     )}
                   </View>

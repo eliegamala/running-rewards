@@ -11,7 +11,7 @@
  */
 import { createTokenStore, json, loadContext, logError, text, type ServerContext } from '../_shared/server.ts';
 import { StravaApiError } from '../_shared/strava-api.ts';
-import { normalizeActivity, safeEqual } from '../_shared/strava-logic.ts';
+import { normalizeActivity, planWebhookEvent, safeEqual } from '../_shared/strava-logic.ts';
 import { getValidAccessToken, StravaNotConnectedError } from '../_shared/tokens.ts';
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
@@ -50,13 +50,26 @@ async function processEvent(ctx: ServerContext, event: StravaEvent) {
 
   const store = createTokenStore(ctx.admin);
 
-  if (event.object_type === 'athlete') {
+  const { data: stored } = await ctx.admin
+    .from('strava_activities')
+    .select('activity_id, deleted_at')
+    .eq('activity_id', event.object_id)
+    .eq('athlete_id', event.owner_id)
+    .maybeSingle();
+  const plan = planWebhookEvent(event, {
+    exists: !!stored,
+    deleted: !!stored?.deleted_at,
+  });
+
+  if (plan === 'skip') return; // Duplicate delivery, irrelevant change, or deleted activity.
+
+  if (plan === 'revoke') {
     // The athlete removed the app on Strava.
-    if (String(event.updates?.authorized) === 'false') await store.markRevoked(connection.user_id);
+    await store.markRevoked(connection.user_id);
     return;
   }
 
-  if (event.aspect_type === 'delete') {
+  if (plan === 'soft_delete') {
     // Soft delete: the id stays reserved so it can never earn a reward again.
     await ctx.admin
       .from('strava_activities')
@@ -66,7 +79,17 @@ async function processEvent(ctx: ServerContext, event: StravaEvent) {
     return;
   }
 
-  // create / update: verify against Strava before recording anything.
+  if (plan === 'rename') {
+    // The new title is in the event itself; no Strava request needed.
+    await ctx.admin
+      .from('strava_activities')
+      .update({ name: String(event.updates?.title ?? '').slice(0, 200), updated_at: new Date().toISOString() })
+      .eq('activity_id', event.object_id)
+      .eq('athlete_id', event.owner_id);
+    return;
+  }
+
+  // plan === 'fetch': new activity or changed type. Verify against Strava before recording.
   const { accessToken } = await getValidAccessToken(connection.user_id, {
     store,
     api: ctx.api,

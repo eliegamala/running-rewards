@@ -97,3 +97,12 @@ export const Palette = {
 } as const;
 
 export type PaletteColors = (typeof Palette)['light' | 'dark'];
+
+/**
+ * Strava brand orange, used only on Strava screens. Text on it is near-black: white on
+ * #FD5200 is 3.3:1 (below WCAG AA for these label sizes); #111111 is 5.7:1.
+ */
+export const StravaBrand = {
+  orange: '#FD5200',
+  onOrange: '#111111',
+} as const;

@@ -117,8 +117,15 @@ type ButtonProps = {
   loading?: boolean;
 };
 
-export function PrimaryButton({ label, onPress, loading = false }: ButtonProps) {
-  const colors = usePalette();
+type PrimaryButtonProps = ButtonProps & {
+  /** Overrides the default lime, e.g. Strava orange on Strava screens. */
+  tint?: { background: string; text: string };
+};
+
+export function PrimaryButton({ label, onPress, loading = false, tint }: PrimaryButtonProps) {
+  const palette = usePalette();
+  const background = tint?.background ?? palette.accent;
+  const textColor = tint?.text ?? palette.accentText;
   return (
     <Pressable
       accessibilityRole="button"
@@ -127,13 +134,13 @@ export function PrimaryButton({ label, onPress, loading = false }: ButtonProps) 
       onPress={onPress}
       style={({ pressed }) => [
         styles.primaryButton,
-        { backgroundColor: colors.accent },
+        { backgroundColor: background },
         (pressed || loading) && styles.pressed,
       ]}>
       {loading ? (
-        <ActivityIndicator color={colors.accentText} />
+        <ActivityIndicator color={textColor} />
       ) : (
-        <Text style={[styles.primaryButtonText, { color: colors.accentText }]}>{label}</Text>
+        <Text style={[styles.primaryButtonText, { color: textColor }]}>{label}</Text>
       )}
     </Pressable>
   );

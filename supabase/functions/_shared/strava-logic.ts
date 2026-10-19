@@ -10,14 +10,24 @@ export const STRAVA_AUTHORIZE_URL = 'https://www.strava.com/oauth/authorize';
 export const STATE_TTL_MS = 10 * 60 * 1000;
 /** Refresh access tokens this long before they expire. */
 export const REFRESH_MARGIN_MS = 5 * 60 * 1000;
-/** Per-user cooldown between manual syncs, to protect the app's Strava rate limit. */
-export const SYNC_COOLDOWN_MS = 30 * 1000;
-/** How far back a manual sync looks. */
+/**
+ * Strava's limits are per app (shared by every runner), so each Strava request counts.
+ * Per-user cooldown between manual syncs; within it, nothing is requested from Strava.
+ */
+export const SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+/** Furthest back any sync looks (first sync after connecting). */
 export const SYNC_WINDOW_DAYS = 30;
+/** Later syncs re-check this much before the newest known activity, for late uploads. */
+export const SYNC_OVERLAP_DAYS = 2;
+/** One page per sync. */
+export const SYNC_PAGE_SIZE = 30;
 
 export const REWARD_DISTANCE_M = 5000;
-/** Strava sport types that count as a run for rewards. */
-export const QUALIFYING_SPORT_TYPES = ['Run', 'TrailRun'] as const;
+/**
+ * Strava sport types that can earn rewards. Exact `sport_type` values only: TrailRun,
+ * VirtualRun (treadmill/virtual), Hike etc. do not qualify.
+ */
+export const QUALIFYING_SPORT_TYPES = ['Run', 'Walk'] as const;
 
 // ---- OAuth state -----------------------------------------------------------------------
 
@@ -121,7 +131,7 @@ export type ActivityRecord = {
   qualifies: boolean;
 };
 
-/** Reward rule: a completed, recorded (not manual) Run/TrailRun of at least 5 km. */
+/** Reward rule: a recorded (not manually created) Run or Walk of at least 5 km. */
 export function isQualifyingActivity(activity: {
   sport_type: string | null;
   distance_m: number;
@@ -153,7 +163,9 @@ export function normalizeActivity(raw: unknown): ActivityRecord | null {
     distance_m: distance,
     moving_time_s: typeof a.moving_time === 'number' ? Math.round(a.moving_time) : null,
     start_date: typeof a.start_date === 'string' ? a.start_date : null,
-    is_manual: a.manual === true,
+    // Strava documents `manual` as "Whether this activity was created manually". Fail closed:
+    // anything other than an explicit `false` is treated as manual and can never qualify.
+    is_manual: a.manual !== false,
   };
   return { ...record, qualifies: isQualifyingActivity(record) };
 }
@@ -173,6 +185,43 @@ export function secondsUntilRateLimitReset(now: number) {
 
 export function isInSyncCooldown(lastSyncedAt: string | null, now: number) {
   return lastSyncedAt !== null && now - Date.parse(lastSyncedAt) < SYNC_COOLDOWN_MS;
+}
+
+/**
+ * Start of the sync window (epoch seconds): only activities since the newest one we
+ * already have (minus an overlap for late uploads), never more than SYNC_WINDOW_DAYS back.
+ */
+export function syncAfterEpoch(latestStartDate: string | null, now: number) {
+  const day = 24 * 60 * 60 * 1000;
+  const floor = now - SYNC_WINDOW_DAYS * day;
+  const latest = latestStartDate ? Date.parse(latestStartDate) : NaN;
+  const from = Number.isFinite(latest) ? Math.max(latest - SYNC_OVERLAP_DAYS * day, floor) : floor;
+  return Math.floor(from / 1000);
+}
+
+export type WebhookPlan = 'revoke' | 'soft_delete' | 'rename' | 'fetch' | 'skip';
+
+/**
+ * Decides how to handle a webhook event while making as few Strava requests as possible:
+ * only new activities, or a changed activity type, require fetching from Strava.
+ */
+export function planWebhookEvent(
+  event: { object_type: string; aspect_type: string; updates?: Record<string, unknown> },
+  stored: { exists: boolean; deleted: boolean },
+): WebhookPlan {
+  if (event.object_type === 'athlete') {
+    return String(event.updates?.authorized) === 'false' ? 'revoke' : 'skip';
+  }
+  if (event.object_type !== 'activity') return 'skip';
+  if (event.aspect_type === 'delete') return 'soft_delete';
+  if (stored.deleted) return 'skip';
+  if (event.aspect_type === 'create') return stored.exists ? 'skip' : 'fetch'; // retries/duplicates
+  if (event.aspect_type !== 'update') return 'skip';
+  if (!stored.exists) return 'fetch';
+  // Title and visibility changes need no Strava request; a type change can affect eligibility.
+  const changed = Object.keys(event.updates ?? {});
+  if (changed.some((key) => key !== 'title' && key !== 'private')) return 'fetch';
+  return changed.includes('title') ? 'rename' : 'skip';
 }
 
 /** Constant-time string comparison for shared secrets. */
