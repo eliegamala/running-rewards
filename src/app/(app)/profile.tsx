@@ -20,8 +20,8 @@ import { getStravaState, subscribe as subscribeToStrava } from '@/lib/strava';
 import { clearProfile, getProfile, setDisplayName, subscribe as subscribeToProfile } from '@/lib/profile';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
 import {
-  clearRewardHistory,
   getRewardHistory,
+  getRewardTotals,
   subscribe as subscribeToHistory,
 } from '@/lib/reward-history';
 
@@ -53,16 +53,13 @@ function confirmLogOut() {
 function confirmClearData() {
   Alert.alert(
     'Clear profile data?',
-    'This removes your name and reward history from this phone. An active reward is not affected.',
+    'This removes your name from this phone. Your rewards stay on your account.',
     [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Clear',
         style: 'destructive',
-        onPress: () => {
-          clearProfile();
-          clearRewardHistory();
-        },
+        onPress: () => clearProfile(),
       },
     ],
   );
@@ -109,6 +106,7 @@ export default function ProfileScreen() {
   const colors = Palette[scheme === 'dark' ? 'dark' : 'light'];
   const profile = useSyncExternalStore(subscribeToProfile, getProfile);
   const history = useSyncExternalStore(subscribeToHistory, getRewardHistory);
+  const totals = useSyncExternalStore(subscribeToHistory, getRewardTotals);
   const auth = useSyncExternalStore(subscribeToAuth, getAuthState);
   const strava = useSyncExternalStore(subscribeToStrava, getStravaState);
   const stravaDetail = {
@@ -121,8 +119,8 @@ export default function ProfileScreen() {
   }[strava.status];
 
   const initials = getInitials(profile.displayName);
-  const earned = history.length;
-  const redeemed = history.filter((entry) => entry.status === 'redeemed').length;
+  // All-time counts from the server (history below shows only the most recent credits).
+  const { earned, redeemed } = totals;
   const recent = history
     .filter((entry) => entry.status !== 'unlocked')
     .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
@@ -262,7 +260,7 @@ export default function ProfileScreen() {
         />
         <SettingRow
           title="Clear profile data"
-          detail="Removes your name and reward history from this phone"
+          detail="Removes your name from this phone"
           action="Clear"
           onPress={confirmClearData}
           colors={colors}

@@ -10,6 +10,7 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 
 import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
+import { refreshRewards } from '@/lib/reward-credit';
 import { supabase } from '@/lib/supabase';
 
 export type StravaStatus =
@@ -28,6 +29,8 @@ export type StravaActivity = {
   start_date: string | null;
   is_manual: boolean;
   qualifies: boolean;
+  /** Server's reward decision: 'earned', 'active_reward', 'not_recent', or null. */
+  reward_decision: string | null;
 };
 
 export type StravaState = {
@@ -189,7 +192,7 @@ export async function loadStravaActivities() {
   if (!supabase) return;
   const { data, error } = await supabase
     .from('strava_activities')
-    .select('activity_id, name, sport_type, distance_m, start_date, is_manual, qualifies')
+    .select('activity_id, name, sport_type, distance_m, start_date, is_manual, qualifies, reward_decision')
     .is('deleted_at', null)
     .order('start_date', { ascending: false })
     .limit(20);
@@ -206,7 +209,8 @@ export async function syncStrava(): Promise<ActionResult> {
     }
     return { ok: false, message: messageFor(result.error, result.retryAfter) };
   }
-  await Promise.all([refreshStravaStatus({ force: true }), loadStravaActivities()]);
+  // A sync can unlock a reward on the server, so refresh rewards too.
+  await Promise.all([refreshStravaStatus({ force: true }), loadStravaActivities(), refreshRewards()]);
   return { ok: true };
 }
 

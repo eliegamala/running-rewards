@@ -168,9 +168,9 @@ export default function StravaScreen() {
           <>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>LIVE FROM STRAVA</Text>
             <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
-              Your activities from the last 30 days. Recorded runs and walks of{' '}
-              {REWARD_DISTANCE_KM} km or more are marked as qualifying; they don&apos;t unlock
-              rewards yet.
+              Your activities from the last 30 days. A recorded run or walk of{' '}
+              {REWARD_DISTANCE_KM} km or more unlocks a reward when it syncs within 3 hours of
+              finishing and you don&apos;t already have an active reward.
             </Text>
 
             {strava.activities === null ? (
@@ -204,7 +204,7 @@ export default function StravaScreen() {
                     {activity.qualifies && (
                       <View style={[styles.pill, { backgroundColor: StravaBrand.orange }]}>
                         <Text style={[styles.pillText, { color: StravaBrand.onOrange }]}>
-                          QUALIFIES
+                          {activity.reward_decision === 'earned' ? 'REWARD EARNED' : 'QUALIFIES'}
                         </Text>
                       </View>
                     )}

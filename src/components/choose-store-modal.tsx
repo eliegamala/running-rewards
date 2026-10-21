@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import {
@@ -23,10 +23,22 @@ export function ChooseStoreModal({ store, onClose, onSelected }: ChooseStoreModa
   const scheme = useColorScheme();
   const colors = Palette[scheme === 'dark' ? 'dark' : 'light'];
   const [unavailable, setUnavailable] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
+  const busyRef = useRef(false);
   const category = getCategory(store.category);
 
-  const confirm = () => {
-    if (selectStore(store.id)) onSelected();
+  // The server ties the reward to this store; only its answer counts.
+  const confirm = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setNetworkError(false);
+    const result = await selectStore(store.id);
+    busyRef.current = false;
+    setBusy(false);
+    if (result.ok) onSelected();
+    else if (result.reason === 'network') setNetworkError(true);
     else setUnavailable(true);
   };
 
@@ -58,7 +70,12 @@ export function ChooseStoreModal({ store, onClose, onSelected }: ChooseStoreModa
         You have one reward. Choosing {store.name} opens a live pass to show when you arrive, and
         the other spots will no longer be available.
       </Text>
-      <ModalButton label="USE IT HERE" onPress={confirm} />
+      {networkError && (
+        <Text style={[modalText.copy, { color: colors.accent }]}>
+          Couldn&apos;t reach the server. Check your connection and try again.
+        </Text>
+      )}
+      <ModalButton label={busy ? 'CHOOSING…' : 'USE IT HERE'} onPress={confirm} />
       <ModalButton label="Cancel" variant="secondary" onPress={onClose} />
     </CelebrationModal>
   );

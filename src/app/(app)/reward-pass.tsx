@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Pressable,
@@ -35,6 +35,9 @@ export default function RewardPassScreen() {
   const { credit, status, remainingMs } = useRewardCredit();
   const [redeemStep, setRedeemStep] = useState<RedeemStep | null>(null);
   const [redeemedHere, setRedeemedHere] = useState(false);
+  const [redeeming, setRedeeming] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
+  const redeemingRef = useRef(false);
 
   const storeId = credit.redeemedStoreId ?? credit.selectedStoreId;
   const store = storeId ? getStore(storeId) : undefined;
@@ -56,10 +59,20 @@ export default function RewardPassScreen() {
 
   const backToRewards = () => router.navigate('/rewards');
 
-  const confirmRedeem = () => {
-    if (store && redeemReward(store.id)) {
+  // The server redeems (checking expiry, store and single use); only its answer counts.
+  const confirmRedeem = async () => {
+    if (!store || redeemingRef.current) return;
+    redeemingRef.current = true;
+    setRedeeming(true);
+    setNetworkError(false);
+    const result = await redeemReward(store.id);
+    redeemingRef.current = false;
+    setRedeeming(false);
+    if (result.ok) {
       setRedeemedHere(true);
       setRedeemStep('done');
+    } else if (result.reason === 'network') {
+      setNetworkError(true); // stay on the confirm step so they can retry
     } else {
       setRedeemStep('unavailable');
     }
@@ -230,7 +243,12 @@ export default function RewardPassScreen() {
               <Text style={[modalText.copy, { color: colors.heroMuted }]}>
                 Only redeem in front of staff. This uses your reward and can&apos;t be undone.
               </Text>
-              <ModalButton label="REDEEM NOW" onPress={confirmRedeem} />
+              {networkError && (
+                <Text style={[modalText.copy, { color: colors.accent }]}>
+                  Couldn&apos;t reach the server. Check your connection and try again.
+                </Text>
+              )}
+              <ModalButton label={redeeming ? 'REDEEMING…' : 'REDEEM NOW'} onPress={confirmRedeem} />
               <ModalButton label="Cancel" variant="secondary" onPress={() => setRedeemStep(null)} />
             </>
           )}

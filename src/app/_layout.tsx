@@ -8,8 +8,8 @@ import { RewardCelebration } from '@/components/reward-celebration';
 import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
 // Registers the background location task at startup, as TaskManager requires.
 import '@/lib/run-tracker';
-// Starts recording reward events so Profile history is complete.
-import '@/lib/reward-history';
+// Loads server rewards and starts queuing GPS reward claims before any run can begin.
+import '@/lib/reward-credit';
 
 SplashScreen.preventAutoHideAsync();
 

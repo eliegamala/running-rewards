@@ -125,7 +125,13 @@ async function sync(ctx: ServerContext, userId: string) {
     .update({ last_synced_at: new Date(now).toISOString() })
     .eq('user_id', userId);
 
-  return json({ synced: activities.length });
+  // Server-side reward decision for newly recorded activities (idempotent).
+  const { data: earned, error: rewardError } = await ctx.admin.rpc('evaluate_strava_rewards', {
+    p_user_id: userId,
+  });
+  if (rewardError) throw new Error('Could not evaluate Strava rewards.');
+
+  return json({ synced: activities.length, rewardsEarned: earned ?? 0 });
 }
 
 async function disconnect(ctx: ServerContext, userId: string) {
@@ -145,7 +151,9 @@ async function disconnect(ctx: ServerContext, userId: string) {
     if (!(error instanceof StravaNotConnectedError)) logError('strava.disconnect.revoke', error);
     else revokedAtStrava = true;
   }
-  // Activities are kept so a reconnect can never earn a second reward for the same run.
+  // Keep activity ids, dates and reward decisions (so a reconnect can never earn the same
+  // reward twice) but erase names and other details.
+  await ctx.admin.rpc('scrub_strava_activities', { p_user_id: userId });
   await ctx.admin.from('strava_connections').delete().eq('user_id', userId);
   await ctx.admin.from('strava_oauth_states').delete().eq('user_id', userId);
   return json({ disconnected: true, revokedAtStrava });

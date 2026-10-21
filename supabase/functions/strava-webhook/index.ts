@@ -2,7 +2,9 @@
  * Strava webhook endpoint (public; Strava calls it without a Supabase JWT).
  *
  * Strava does not sign events, so:
- *   - the callback URL carries a secret `key` (STRAVA_WEBHOOK_VERIFY_TOKEN), checked on GET and POST;
+ *   - the callback URL carries a secret key (STRAVA_WEBHOOK_VERIFY_TOKEN) as its last path
+ *     segment (…/strava-webhook/<key>), checked on GET and POST. A path segment is used because
+ *     Strava appends its own query parameters to the callback URL;
  *   - the subscription id is checked when STRAVA_WEBHOOK_SUBSCRIPTION_ID is set;
  *   - events are only hints: activities are re-fetched from Strava with the owner's token
  *     before anything is recorded, so a forged event can't create an activity.
@@ -34,10 +36,17 @@ function parseEvent(body: unknown): StravaEvent | null {
   return e;
 }
 
+/** The key from …/strava-webhook/<key> (preferred) or ?key=<key>. */
+function providedKey(url: URL) {
+  const segments = url.pathname.split('/').filter(Boolean);
+  const index = segments.lastIndexOf('strava-webhook');
+  if (index >= 0 && segments[index + 1]) return decodeURIComponent(segments[index + 1]);
+  return url.searchParams.get('key') ?? '';
+}
+
 function hasValidKey(url: URL) {
   const expected = Deno.env.get('STRAVA_WEBHOOK_VERIFY_TOKEN');
-  const key = url.searchParams.get('key') ?? '';
-  return !!expected && safeEqual(key, expected);
+  return !!expected && safeEqual(providedKey(url), expected);
 }
 
 async function processEvent(ctx: ServerContext, event: StravaEvent) {
@@ -64,8 +73,9 @@ async function processEvent(ctx: ServerContext, event: StravaEvent) {
   if (plan === 'skip') return; // Duplicate delivery, irrelevant change, or deleted activity.
 
   if (plan === 'revoke') {
-    // The athlete removed the app on Strava.
+    // The athlete removed the app on Strava: drop tokens and activity details.
     await store.markRevoked(connection.user_id);
+    await ctx.admin.rpc('scrub_strava_activities', { p_user_id: connection.user_id });
     return;
   }
 
@@ -109,6 +119,12 @@ async function processEvent(ctx: ServerContext, event: StravaEvent) {
     p_activities: [activity],
   });
   if (error) throw new Error('Could not record webhook activity.');
+
+  // Decide the reward right away: this is what makes "finish 5 km, reward unlocks" work.
+  const { error: rewardError } = await ctx.admin.rpc('evaluate_strava_rewards', {
+    p_user_id: connection.user_id,
+  });
+  if (rewardError) throw new Error('Could not evaluate Strava rewards.');
 }
 
 Deno.serve(async (req) => {

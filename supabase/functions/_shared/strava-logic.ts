@@ -126,6 +126,8 @@ export type ActivityRecord = {
   sport_type: string | null;
   distance_m: number;
   moving_time_s: number | null;
+  /** Wall-clock duration including pauses; start_date + elapsed = when the run finished. */
+  elapsed_time_s: number | null;
   start_date: string | null;
   is_manual: boolean;
   qualifies: boolean;
@@ -162,6 +164,7 @@ export function normalizeActivity(raw: unknown): ActivityRecord | null {
     sport_type: sportType,
     distance_m: distance,
     moving_time_s: typeof a.moving_time === 'number' ? Math.round(a.moving_time) : null,
+    elapsed_time_s: typeof a.elapsed_time === 'number' ? Math.round(a.elapsed_time) : null,
     start_date: typeof a.start_date === 'string' ? a.start_date : null,
     // Strava documents `manual` as "Whether this activity was created manually". Fail closed:
     // anything other than an explicit `false` is treated as manual and can never qualify.

@@ -1,31 +1,33 @@
 /**
- * The runner's single reward credit.
+ * The runner's reward credit, as issued by the server (Supabase `reward_credits`).
  *
- * Running 5 km in one run unlocks ONE credit, which can be spent at any ONE participating
- * store within an hour of unlocking. Stores are just redemption choices for this credit;
- * there is no per-store unlock state.
+ * The server is the only source of truth and enforces every rule: one credit per qualifying
+ * run, one active credit at a time, expiry exactly one hour after unlocking, store selection
+ * separate from redemption, and a single redemption at the selected store.
  *
- * Lifecycle: locked → unlocked → (store selected, still `unlocked`) → redeemed, or expired
- * if the hour runs out first. Selecting a store doesn't use the credit; redeeming does.
- *
- * Only one credit exists at a time, and each run can earn at most one. Once a credit is
- * redeemed or expired, a different run reaching 5 km can unlock the next one.
- *
- * Saved on this device and restored synchronously at startup, before anything can read or
- * overwrite it, so an active reward survives the app being closed.
+ * This module only mirrors it:
+ *   - reads the runner's credits (RLS: own rows only) and derives each status;
+ *   - asks the server to select a store / redeem;
+ *   - claims a reward for in-app GPS runs that pass 5 km (the server sanity-checks the claim).
+ * A small display cache shows the last known state on an offline launch; it can't grant
+ * anything, because every action goes through the server.
  */
-import { readJson, writeJson } from '@/lib/local-json';
+import { AppState } from 'react-native';
+
+import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
+import { deleteJson, readJson, writeJson } from '@/lib/local-json';
 import { getSnapshot as getRunSnapshot, subscribe as subscribeToRun } from '@/lib/run-tracker';
+import { supabase } from '@/lib/supabase';
 
 export const REWARD_DISTANCE_KM = 5;
 export const REWARD_DURATION_MS = 60 * 60 * 1000;
 
-const STORAGE_NAME = 'reward-credit';
-const STATUSES = ['locked', 'unlocked', 'redeemed', 'expired'] as const;
-
-export type RewardStatus = (typeof STATUSES)[number];
+export type RewardStatus = 'locked' | 'unlocked' | 'redeemed' | 'expired';
 
 export type RewardCredit = {
+  /** Server credit id; null when there is no credit. */
+  id: string | null;
+  source: 'strava' | 'gps' | null;
   status: RewardStatus;
   unlockedAt: number | null;
   expiresAt: number | null;
@@ -33,41 +35,71 @@ export type RewardCredit = {
   selectedStoreId: string | null;
   redeemedAt: number | null;
   redeemedStoreId: string | null;
-  /** The run that earned this credit, so one run can never earn two. */
-  earnedRunId: string | null;
 };
 
+type CreditRow = {
+  id: string;
+  source: 'strava' | 'gps';
+  unlocked_at: string;
+  expires_at: string;
+  selected_store_id: string | null;
+  redeemed_at: string | null;
+  redeemed_store_id: string | null;
+};
+
+export type RewardTotals = { earned: number; redeemed: number };
+
+const CREDIT_COLUMNS =
+  'id, source, unlocked_at, expires_at, selected_store_id, redeemed_at, redeemed_store_id';
+const HISTORY_LIMIT = 25;
+const CACHE_NAME = 'reward-credits-cache';
+const CLAIMS_NAME = 'gps-reward-claims';
+
 const LOCKED: RewardCredit = {
+  id: null,
+  source: null,
   status: 'locked',
   unlockedAt: null,
   expiresAt: null,
   selectedStoreId: null,
   redeemedAt: null,
   redeemedStoreId: null,
-  earnedRunId: null,
 };
 
-function restoreCredit(): RewardCredit {
-  const saved = readJson<Partial<RewardCredit> | null>(STORAGE_NAME, null);
-  if (!saved || !STATUSES.includes(saved.status as RewardStatus)) return LOCKED;
-  const restored = { ...LOCKED, ...saved };
-  // A non-locked credit without its timestamps can't be trusted; start fresh.
-  if (
-    restored.status !== 'locked' &&
-    (restored.unlockedAt === null || restored.expiresAt === null)
-  ) {
-    return LOCKED;
-  }
-  return restored;
+function toCredit(row: CreditRow, now: number): RewardCredit {
+  const expiresAt = Date.parse(row.expires_at);
+  const redeemedAt = row.redeemed_at ? Date.parse(row.redeemed_at) : null;
+  return {
+    id: row.id,
+    source: row.source,
+    status: redeemedAt !== null ? 'redeemed' : expiresAt <= now ? 'expired' : 'unlocked',
+    unlockedAt: Date.parse(row.unlocked_at),
+    expiresAt,
+    selectedStoreId: row.selected_store_id,
+    redeemedAt,
+    redeemedStoreId: row.redeemed_store_id,
+  };
 }
 
-let credit: RewardCredit = restoreCredit();
+// ---- Store ------------------------------------------------------------------------------
+
+let rows: CreditRow[] = [];
+let credit: RewardCredit = LOCKED;
+let history: RewardCredit[] = [];
+let totals: RewardTotals = { earned: 0, redeemed: 0 };
 const listeners = new Set<() => void>();
 
-function update(next: RewardCredit) {
-  credit = next;
-  writeJson(STORAGE_NAME, credit);
+function emit() {
   listeners.forEach((listener) => listener());
+}
+
+function applyRows(next: CreditRow[], nextTotals?: RewardTotals) {
+  rows = next;
+  const now = Date.now();
+  history = rows.map((row) => toCredit(row, now));
+  credit = history[0] ?? LOCKED; // newest credit
+  if (nextTotals) totals = nextTotals;
+  emit();
 }
 
 export function subscribe(listener: () => void) {
@@ -77,63 +109,220 @@ export function subscribe(listener: () => void) {
   };
 }
 
+/** The newest credit (active, or the last one used/expired), or a locked placeholder. */
 export function getRewardCredit() {
   return credit;
 }
 
-function unlockReward(runId: string) {
-  expireRewardIfDue();
-  // One active credit at a time, and one credit per run.
-  if (credit.status === 'unlocked' || credit.earnedRunId === runId) return;
-  const unlockedAt = Date.now();
-  update({
-    ...LOCKED,
-    status: 'unlocked',
-    unlockedAt,
-    expiresAt: unlockedAt + REWARD_DURATION_MS,
-    earnedRunId: runId,
-  });
+/** Newest first, up to the last 25 credits. */
+export function getRewardCredits() {
+  return history;
 }
 
-/** Moves an unlocked credit to `expired` once its hour is up. */
+/** All-time counts from the server. */
+export function getRewardTotals() {
+  return totals;
+}
+
+/** Re-derives statuses when the hour runs out (the server enforces expiry independently). */
 export function expireRewardIfDue() {
-  if (credit.status === 'unlocked' && credit.expiresAt !== null && Date.now() >= credit.expiresAt) {
-    update({ ...credit, status: 'expired' });
+  if (credit.status === 'unlocked' && credit.expiresAt !== null && credit.expiresAt <= Date.now()) {
+    applyRows(rows);
   }
 }
 
-/**
- * Ties the credit to one store so the runner can open its live pass. The choice is final.
- * Returns false if the credit can't be used or a different store was already chosen.
- */
-export function selectStore(storeId: string) {
-  expireRewardIfDue();
-  if (credit.status !== 'unlocked') return false;
-  if (credit.selectedStoreId !== null) return credit.selectedStoreId === storeId;
-  update({ ...credit, selectedStoreId: storeId });
-  return true;
+// ---- Server reads -----------------------------------------------------------------------
+
+type Cache = { userId: string; rows: CreditRow[]; totals: RewardTotals };
+
+function signedInUserId() {
+  const auth = getAuthState();
+  return auth.status === 'signedIn' ? auth.userId : null;
 }
 
-/**
- * Spends the credit at the selected store. Returns false if it can't be used
- * (expired, already used, or not the store the pass was opened for).
- */
-export function redeemReward(storeId: string) {
-  expireRewardIfDue();
-  if (credit.status !== 'unlocked' || credit.selectedStoreId !== storeId) return false;
-  update({ ...credit, status: 'redeemed', redeemedAt: Date.now(), redeemedStoreId: storeId });
-  return true;
+let refreshing: Promise<void> | null = null;
+
+/** Fetches the runner's credits and totals from the server. */
+export function refreshRewards(): Promise<void> {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    const userId = signedInUserId();
+    if (!supabase || !userId) return;
+    const [list, earned, redeemed] = await Promise.all([
+      supabase
+        .from('reward_credits')
+        .select(CREDIT_COLUMNS)
+        .order('unlocked_at', { ascending: false })
+        .limit(HISTORY_LIMIT),
+      supabase.from('reward_credits').select('id', { count: 'exact', head: true }),
+      supabase
+        .from('reward_credits')
+        .select('id', { count: 'exact', head: true })
+        .not('redeemed_at', 'is', null),
+    ]);
+    // Ignore failures (e.g. offline): keep showing the last known state.
+    if (list.error || earned.error || redeemed.error || signedInUserId() !== userId) return;
+    const nextRows = (list.data ?? []) as CreditRow[];
+    const nextTotals = { earned: earned.count ?? nextRows.length, redeemed: redeemed.count ?? 0 };
+    applyRows(nextRows, nextTotals);
+    writeJson(CACHE_NAME, { userId, rows: nextRows, totals: nextTotals } satisfies Cache);
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
 }
 
-// A reward restored from storage may have run out while the app was closed.
-expireRewardIfDue();
+// ---- Server actions ---------------------------------------------------------------------
 
-// The run tracker is the source of truth for distance. This also fires from the
-// background location task, so the reward unlocks even while the screen is locked.
-// Distance only grows while running, so pausing can never unlock a reward.
+export type RewardActionResult = { ok: true } | { ok: false; reason: string };
+
+const SERVER_REASONS = [
+  'expired',
+  'already_redeemed',
+  'store_already_selected',
+  'wrong_store',
+  'not_found',
+  'invalid_store',
+  'not_authenticated',
+];
+
+function reasonFrom(error: { message?: string } | null) {
+  const message = error?.message ?? '';
+  return SERVER_REASONS.find((reason) => message.includes(reason)) ?? 'network';
+}
+
+/** Ties the current credit to one store so the live pass can open. Doesn't redeem. */
+export async function selectStore(storeId: string): Promise<RewardActionResult> {
+  if (!supabase || !credit.id) return { ok: false, reason: 'not_found' };
+  const { error } = await supabase.rpc('select_reward_store', {
+    p_credit_id: credit.id,
+    p_store_id: storeId,
+  });
+  await refreshRewards();
+  return error ? { ok: false, reason: reasonFrom(error) } : { ok: true };
+}
+
+/** Spends the current credit at the selected store. The server checks expiry and store. */
+export async function redeemReward(storeId: string): Promise<RewardActionResult> {
+  if (!supabase || !credit.id) return { ok: false, reason: 'not_found' };
+  const { error } = await supabase.rpc('redeem_reward', {
+    p_credit_id: credit.id,
+    p_store_id: storeId,
+  });
+  await refreshRewards();
+  return error ? { ok: false, reason: reasonFrom(error) } : { ok: true };
+}
+
+// ---- GPS runs: claim a reward from the server --------------------------------------------
+
+type PendingClaim = { userId: string; runId: string; startedAt: number; distanceMeters: number };
+
+/** The server rejects claims faster than 6 m/s on average; wait until a claim is plausible. */
+const MAX_SPEED_MPS = 6;
+const CLAIM_MARGIN_MS = 15 * 1000;
+const RETRY_MS = 30 * 1000;
+/** Claims the server will never accept again are dropped. */
+const PERMANENT_REASONS = ['not_qualifying', 'not_recent', 'invalid_run'];
+
+let claims = readJson<PendingClaim[]>(CLAIMS_NAME, []);
+const claimedRunIds = new Set(claims.map((c) => c.runId));
+let processingClaims = false;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function saveClaims(next: PendingClaim[]) {
+  claims = next;
+  writeJson(CLAIMS_NAME, claims);
+}
+
+function scheduleClaims(delayMs: number) {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void processClaims();
+  }, Math.max(delayMs, 1000));
+}
+
+async function processClaims() {
+  const userId = signedInUserId();
+  if (!supabase || !userId || processingClaims) return;
+  processingClaims = true;
+  let nextDelay: number | null = null;
+  try {
+    for (const claim of claims.filter((c) => c.userId === userId)) {
+      const plausibleAt =
+        claim.startedAt + (claim.distanceMeters / MAX_SPEED_MPS) * 1000 + CLAIM_MARGIN_MS;
+      if (Date.now() < plausibleAt) {
+        nextDelay = Math.min(nextDelay ?? Infinity, plausibleAt - Date.now());
+        continue;
+      }
+      const { data, error } = await supabase.rpc('claim_gps_reward', {
+        p_run_id: claim.runId,
+        p_distance_m: claim.distanceMeters,
+        p_started_at: new Date(claim.startedAt).toISOString(),
+      });
+      const message = error?.message ?? '';
+      const permanent = PERMANENT_REASONS.some((reason) => message.includes(reason));
+      if (!error || permanent) {
+        // 'earned', 'already_earned', 'active_reward' or a definite rejection: done.
+        saveClaims(claims.filter((c) => c.runId !== claim.runId));
+        if (!error && data === 'earned') await refreshRewards();
+      } else {
+        nextDelay = Math.min(nextDelay ?? Infinity, RETRY_MS); // offline etc.: try again
+      }
+    }
+  } finally {
+    processingClaims = false;
+  }
+  if (nextDelay !== null) scheduleClaims(nextDelay);
+}
+
+// The moment an in-app run passes 5 km, queue one claim for it (persisted, retried).
 subscribeToRun(() => {
   const run = getRunSnapshot();
-  if (run.isActive && run.startTime !== null && run.distanceMeters >= REWARD_DISTANCE_KM * 1000) {
-    unlockReward(String(run.startTime));
+  const userId = signedInUserId();
+  if (!userId || !run.isActive || run.startTime === null) return;
+  if (run.distanceMeters < REWARD_DISTANCE_KM * 1000) return;
+  const runId = String(run.startTime);
+  if (claimedRunIds.has(runId)) return;
+  claimedRunIds.add(runId);
+  saveClaims([
+    ...claims,
+    { userId, runId, startedAt: run.startTime, distanceMeters: run.distanceMeters },
+  ]);
+  void processClaims();
+});
+
+// ---- Lifecycle -----------------------------------------------------------------------------
+
+// Rewards used to be kept only on the phone; that data is no longer used.
+deleteJson('reward-credit');
+deleteJson('reward-history');
+
+function loadForUser(userId: string | null) {
+  const cache = readJson<Cache | null>(CACHE_NAME, null);
+  if (userId && cache?.userId === userId) applyRows(cache.rows, cache.totals);
+  else {
+    totals = { earned: 0, redeemed: 0 };
+    applyRows([]);
   }
+  if (userId) {
+    void refreshRewards();
+    void processClaims();
+  }
+}
+
+let lastUserId: string | null = signedInUserId();
+loadForUser(lastUserId);
+
+subscribeToAuth(() => {
+  const userId = signedInUserId();
+  if (userId === lastUserId) return;
+  lastUserId = userId;
+  loadForUser(userId);
+});
+
+AppState.addEventListener('change', (state) => {
+  if (state !== 'active') return;
+  void refreshRewards();
+  void processClaims();
 });

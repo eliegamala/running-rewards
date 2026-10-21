@@ -9,24 +9,28 @@ import {
   modalText,
 } from '@/components/celebration-modal';
 import { Palette } from '@/constants/theme';
+import { readJson, writeJson } from '@/lib/local-json';
 import { getRewardCredit, REWARD_DISTANCE_KM, subscribe } from '@/lib/reward-credit';
 
-// Rewards restored from storage were already celebrated when they unlocked.
-const APP_STARTED_AT = Date.now();
+const STORAGE_NAME = 'celebrated-rewards';
 
-/** One-time celebration shown when a 5 km reward credit unlocks during this session. */
+/**
+ * Celebrates each active reward once, including one unlocked by a Strava run while the app
+ * was closed. Remembers celebrated credit ids on this phone.
+ */
 export function RewardCelebration() {
   const scheme = useColorScheme();
   const colors = Palette[scheme === 'dark' ? 'dark' : 'light'];
   const credit = useSyncExternalStore(subscribe, getRewardCredit);
-  // Tracks which credit was dismissed, so a later credit can still be celebrated.
-  const [dismissedId, setDismissedId] = useState<number | null>(null);
+  const [celebrated, setCelebrated] = useState(() => readJson<string[]>(STORAGE_NAME, []));
   const visible =
-    credit.status === 'unlocked' &&
-    credit.unlockedAt !== null &&
-    credit.unlockedAt >= APP_STARTED_AT &&
-    credit.unlockedAt !== dismissedId;
-  const dismiss = () => setDismissedId(credit.unlockedAt);
+    credit.status === 'unlocked' && credit.id !== null && !celebrated.includes(credit.id);
+  const dismiss = () => {
+    if (!credit.id) return;
+    const next = [credit.id, ...celebrated].slice(0, 20);
+    setCelebrated(next);
+    writeJson(STORAGE_NAME, next);
+  };
 
   const chooseReward = () => {
     dismiss();

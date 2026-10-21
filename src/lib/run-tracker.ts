@@ -284,9 +284,14 @@ export async function stopOrphanedTracking() {
 /**
  * TEMPORARY, DEV ONLY: adds distance to the active run so the reward flow can be
  * tested without running. Remove before release.
+ *
+ * The server rejects 5 km+ claims faster than a human can run, so the run's start is moved
+ * back as if it had been run at 5 m/s; the reward then unlocks instantly, like a real run.
  */
 export function simulateDistanceForTesting(meters: number) {
   // Only running distance counts, so this does nothing while paused.
-  if (!__DEV__ || !snapshot.isActive || snapshot.isPaused) return;
-  update({ distanceMeters: snapshot.distanceMeters + meters });
+  if (!__DEV__ || !snapshot.isActive || snapshot.isPaused || snapshot.startTime === null) return;
+  const distanceMeters = snapshot.distanceMeters + meters;
+  const plausibleStart = Date.now() - Math.ceil((distanceMeters / 5) * 1000);
+  update({ distanceMeters, startTime: Math.min(snapshot.startTime, plausibleStart) });
 }
