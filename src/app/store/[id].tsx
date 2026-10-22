@@ -23,13 +23,14 @@ import {
   getCategory,
   getStore,
   getStoresState,
+  productImageFor,
   type Store,
   subscribe as subscribeToStores,
 } from '@/lib/stores';
 
 const GUTTER = Spacing.four;
 
-/** Venue photos (swipeable), else the product cut-out or cup on the dark green card. */
+/** Venue photos (up to three, swipeable), else the product photo on the dark green card. */
 function Header({ store, width, colors }: { store: Store; width: number; colors: PaletteColors }) {
   const height = Math.min(Math.round(width * 0.82), 420);
   const [page, setPage] = useState(0);
@@ -37,15 +38,15 @@ function Header({ store, width, colors }: { store: Store; width: number; colors:
   if (store.venueImageUrls.length === 0) {
     return (
       <View style={[styles.header, { height, backgroundColor: colors.hero }]}>
-        {store.productImageUrl ? (
+        {store.category === 'run-club' && !store.productImageUrl ? (
+          <CupArt size={height * 0.62} category={store.category} saucerColor="rgba(246, 242, 200, 0.08)" />
+        ) : (
           <Image
-            source={{ uri: store.productImageUrl }}
+            source={productImageFor(store)}
             style={{ width: height * 0.62, height: height * 0.62 }}
             contentFit="contain"
             accessibilityIgnoresInvertColors
           />
-        ) : (
-          <CupArt size={height * 0.62} category={store.category} saucerColor="rgba(246, 242, 200, 0.08)" />
         )}
       </View>
     );
@@ -199,6 +200,11 @@ export default function StoreScreen() {
           {store.description && (
             <Text style={[styles.copy, { color: colors.textMuted }]}>{store.description}</Text>
           )}
+          {distance === null && store.locations.length > 0 && nearby.permission !== 'granted' && (
+            <Text style={[styles.hint, { color: colors.textMuted }]}>
+              Turn on location to see how far away it is.
+            </Text>
+          )}
 
           <View style={[styles.actionCard, { backgroundColor: colors.hero }]}>
             <Text style={[styles.eyebrow, { color: colors.accent }]}>{action.eyebrow}</Text>
@@ -219,9 +225,52 @@ export default function StoreScreen() {
             )}
           </View>
 
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>GOOD TO KNOW</Text>
+          <View style={[styles.facts, { backgroundColor: colors.surface }]}>
+            {[
+              ['🎁', store.rewardConfirmed ? store.reward : 'Reward details coming soon'],
+              ['🏃', `Unlocked by any ${REWARD_DISTANCE_KM} km run or walk`],
+              ['⏱', 'Use it within 1 hour of unlocking'],
+              ['📱', 'Show your live pass at the counter'],
+            ].map(([icon, text]) => (
+              <View key={icon} style={styles.fact}>
+                <Text style={styles.factIcon}>{icon}</Text>
+                <Text style={[styles.factText, { color: colors.text }]}>{text}</Text>
+              </View>
+            ))}
+          </View>
+
+          {store.openingHours && (
+            <>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                {store.category === 'run-club' ? 'WHEN THEY RUN' : 'OPENING HOURS'}
+              </Text>
+              <Text style={[styles.bodyText, { color: colors.text }]}>{store.openingHours}</Text>
+            </>
+          )}
+
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>HOW IT WORKS HERE</Text>
+          {[
+            `Run ${REWARD_DISTANCE_KM} km in one go, tracked in the app or Strava.`,
+            `Tap “Use my reward here” to open your live pass for ${store.name}.`,
+            'Show the pass at the counter and let staff confirm it.',
+          ].map((step, index) => (
+            <View key={step} style={[styles.step, { borderTopColor: colors.border }]}>
+              <Text style={[styles.stepNumber, { color: colors.textMuted }]}>
+                {String(index + 1).padStart(2, '0')}
+              </Text>
+              <Text style={[styles.stepText, { color: colors.text }]}>{step}</Text>
+            </View>
+          ))}
+
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
             {store.locations.length > 1 ? 'WHERE TO FIND THEM' : 'WHERE TO FIND IT'}
           </Text>
+          {store.locations.length === 0 && (
+            <Text style={[styles.bodyText, { color: colors.textMuted }]}>
+              📍 Location coming soon
+            </Text>
+          )}
           {store.locations.map((location, index) => (
             <View
               key={`${location.address}-${index}`}
@@ -385,6 +434,53 @@ const styles = StyleSheet.create({
   location: {
     borderTopWidth: StyleSheet.hairlineWidth,
     marginTop: Spacing.two,
+  },
+  hint: {
+    fontSize: 13,
+    marginTop: Spacing.two,
+  },
+  facts: {
+    borderRadius: 24,
+    padding: Spacing.three,
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  fact: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  factIcon: {
+    fontSize: 16,
+    width: 24,
+  },
+  factText: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  bodyText: {
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: Spacing.two,
+  },
+  step: {
+    flexDirection: 'row',
+    gap: Spacing.three,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: Spacing.one,
+  },
+  stepNumber: {
+    fontSize: 13,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    paddingTop: 2,
+  },
+  stepText: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 21,
   },
   allSpots: {
     marginTop: Spacing.four,

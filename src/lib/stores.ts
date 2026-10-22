@@ -6,7 +6,7 @@
  * is handled separately in `reward-credit.ts`. A store has one or more physical locations.
  * Unknown details are left empty, never guessed.
  */
-import { AppState } from 'react-native';
+import { AppState, type ImageSourcePropType } from 'react-native';
 
 import { readJson, writeJson } from '@/lib/local-json';
 import { supabase } from '@/lib/supabase';
@@ -37,8 +37,10 @@ export type Store = {
   description: string | null;
   /** Product cut-out (transparent PNG). Stores without one use the cup illustration. */
   productImageUrl: string | null;
-  /** Up to two venue photos for the café page. */
+  /** Up to three venue photos for the café page. */
   venueImageUrls: string[];
+  /** Free text from the café, e.g. "Mon–Fri 6:30–16:00" (or when a run club meets). */
+  openingHours: string | null;
   /** Where the reward can be redeemed. Every store has at least one. */
   locations: StoreLocation[];
 };
@@ -52,6 +54,61 @@ export const CATEGORIES: { id: StoreCategory; label: string; emoji: string }[] =
 
 export function getCategory(id: StoreCategory) {
   return CATEGORIES.find((category) => category.id === id) ?? CATEGORIES[0];
+}
+
+/** "1 spot", "3 spots"; run clubs are counted as clubs. */
+export function countLabel(category: StoreCategory, count: number) {
+  const noun = category === 'run-club' ? 'club' : 'spot';
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * TEST STAND-INS: the matcha photos supplied earlier (they carry Starbucks and Platō
+ * branding). Shown only for stores without their own product photo, until cafés send theirs.
+ */
+const STAND_IN_PRODUCT_IMAGES: ImageSourcePropType[] = [
+  require('@/assets/images/products/plato-matcha.png'),
+  require('@/assets/images/products/matcha-latte.png'),
+];
+
+/** The store's own product photo, else a stand-in picked consistently per store. */
+export function productImageFor(store: Store): ImageSourcePropType {
+  if (store.productImageUrl) return { uri: store.productImageUrl };
+  let hash = 0;
+  for (const char of store.id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return STAND_IN_PRODUCT_IMAGES[Math.abs(hash) % STAND_IN_PRODUCT_IMAGES.length];
+}
+
+// ---- Fresh order ---------------------------------------------------------------------------
+
+/** How long one carousel order lasts before it reshuffles. */
+export const FRESH_ORDER_MS = 5 * 60 * 60 * 1000;
+
+/** Small seeded random generator (mulberry32), so an order holds for the whole window. */
+function seededRandom(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * The same stores in an order that changes every 5 hours (and differs per `salt`, so two
+ * carousels don't match). Everyone sees the same order in the same window.
+ */
+export function freshOrder<T>(items: T[], salt: number, now = Date.now()): T[] {
+  const window = Math.floor(now / FRESH_ORDER_MS);
+  const random = seededRandom(window * 7919 + salt * 104729);
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
 }
 
 // ---- Store list ------------------------------------------------------------------------------
@@ -110,6 +167,7 @@ export function unlistedStore(id: string): Store {
     description: null,
     productImageUrl: null,
     venueImageUrls: [],
+    openingHours: null,
     locations: [],
   };
 }
@@ -143,6 +201,7 @@ type StoreRow = {
   description: string | null;
   product_image_path: string | null;
   venue_image_paths: string[] | null;
+  opening_hours: string | null;
   sort_order: number;
   store_locations:
     | {
@@ -167,7 +226,8 @@ export function toStore(row: StoreRow, publicUrl: (path: string) => string): Sto
     rewardConfirmed: row.reward !== null,
     description: row.description,
     productImageUrl: row.product_image_path ? publicUrl(row.product_image_path) : null,
-    venueImageUrls: (row.venue_image_paths ?? []).slice(0, 2).map(publicUrl),
+    venueImageUrls: (row.venue_image_paths ?? []).slice(0, 3).map(publicUrl),
+    openingHours: row.opening_hours ?? null,
     locations: [...(row.store_locations ?? [])]
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((l) => ({
@@ -196,7 +256,7 @@ export function refreshStores({ force = false }: { force?: boolean } = {}): Prom
       const { data, error } = await client
         .from('stores')
         .select(
-          'id, name, category, reward, description, product_image_path, venue_image_paths, sort_order, ' +
+          'id, name, category, reward, description, product_image_path, venue_image_paths, opening_hours, sort_order, ' +
             'store_locations (name, address, google_maps_url, latitude, longitude, sort_order)',
         )
         .order('sort_order')
