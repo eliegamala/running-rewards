@@ -7,7 +7,7 @@
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
 import { getAuthState, logOut } from '@/lib/auth';
-import { clearProfile } from '@/lib/profile';
+import { forgetProfileOnDevice } from '@/lib/profile';
 import { forgetUserOnDevice } from '@/lib/reward-credit';
 import { supabase } from '@/lib/supabase';
 
@@ -74,7 +74,7 @@ export async function deleteAccount(typed: string): Promise<DeleteAccountResult>
 
   // The account is gone on the server: forget it on this phone and end the session here.
   forgetUserOnDevice(userId);
-  clearProfile();
+  forgetProfileOnDevice();
   await logOut({ scope: 'local' });
   return {
     ok: true,

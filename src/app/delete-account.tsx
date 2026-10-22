@@ -17,6 +17,7 @@ import { getRewardCredit, subscribe as subscribeToReward } from '@/lib/reward-cr
 
 const WHAT_IS_DELETED = [
   '• Your login and email address',
+  '• Your name and profile photo',
   '• All your rewards, including any you haven’t used yet',
   '• Your reward history',
   '• Your Strava connection and synced runs (we also withdraw access at Strava)',

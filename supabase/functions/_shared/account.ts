@@ -2,9 +2,10 @@
  * Permanent account deletion.
  *
  * Order matters: the Strava token is read first (the connection row disappears with the
- * user), then the Supabase Auth user is deleted — which removes every row that belongs to
- * them, as all user tables cascade — and only then is access revoked at Strava. A Strava
- * problem never blocks deletion, and a failed deletion leaves the account untouched.
+ * user). Stored files (profile photos) are removed next, because Storage doesn't cascade
+ * with the user; if that fails, nothing else is deleted. Then the Supabase Auth user is
+ * deleted — which removes every row that belongs to them, as all user tables cascade — and
+ * only then is access revoked at Strava. A Strava problem never blocks deletion.
  */
 import type { StravaApi } from './strava-api.ts';
 import type { TokenCipher } from './token-crypto.ts';
@@ -18,6 +19,7 @@ export type AccountDeletionDeps = {
   api: Pick<StravaApi, 'refresh' | 'revoke'>;
   cipher: TokenCipher;
   now: () => number;
+  removeUserFiles(userId: string): Promise<{ ok: boolean }>;
   deleteUser(userId: string): Promise<{ ok: boolean }>;
   logError(where: string, error: unknown): void;
 };
@@ -45,8 +47,8 @@ export async function deleteAccount(
     }
   }
 
-  const { ok } = await deps.deleteUser(userId);
-  if (!ok) return { deleted: false, error: 'delete_failed' };
+  if (!(await deps.removeUserFiles(userId)).ok) return { deleted: false, error: 'delete_failed' };
+  if (!(await deps.deleteUser(userId)).ok) return { deleted: false, error: 'delete_failed' };
 
   if (stravaToken) {
     try {

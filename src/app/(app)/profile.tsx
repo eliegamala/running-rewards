@@ -1,8 +1,13 @@
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useSyncExternalStore } from 'react';
 import {
+  ActionSheetIOS,
+  ActivityIndicator,
   Alert,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,7 +28,16 @@ import {
   openNotificationSettingsOrAsk,
   subscribe as subscribeToNotifications,
 } from '@/lib/notifications';
-import { clearProfile, getProfile, setDisplayName, subscribe as subscribeToProfile } from '@/lib/profile';
+import {
+  canHaveProfilePhoto,
+  DISPLAY_NAME_MAX,
+  getProfile,
+  removeProfilePhoto,
+  setDisplayName,
+  setProfilePhoto,
+  subscribe as subscribeToProfile,
+  type ProfileResult,
+} from '@/lib/profile';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
 import {
   getRewardHistory,
@@ -56,18 +70,71 @@ function confirmLogOut() {
   ]);
 }
 
-function confirmClearData() {
-  Alert.alert(
-    'Clear profile data?',
-    'This removes your name from this phone. Your rewards stay on your account.',
-    [
-      { text: 'Cancel', style: 'cancel' },
+function reportIfFailed(result: ProfileResult) {
+  if (!result.ok) Alert.alert('Not saved', result.message);
+}
+
+const PICKER_OPTIONS: ImagePicker.ImagePickerOptions = {
+  mediaTypes: 'images',
+  allowsEditing: true,
+  aspect: [1, 1],
+  quality: 0.8,
+};
+
+async function pickPhoto(source: 'camera' | 'library') {
+  if (source === 'camera') {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Camera is off', 'Allow camera access in Settings to take a profile photo.', [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+      ]);
+      return;
+    }
+  }
+  const result =
+    source === 'camera'
+      ? await ImagePicker.launchCameraAsync(PICKER_OPTIONS)
+      : await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS);
+  const asset = result.canceled ? null : result.assets?.[0];
+  if (asset) reportIfFailed(await setProfilePhoto(asset.uri));
+}
+
+function confirmRemovePhoto() {
+  Alert.alert('Remove profile photo?', 'Your initials will show instead.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Remove', style: 'destructive', onPress: async () => reportIfFailed(await removeProfilePhoto()) },
+  ]);
+}
+
+/** Take / choose / remove. Android alerts allow three buttons; tapping outside cancels. */
+function openPhotoMenu(hasPhoto: boolean) {
+  if (Platform.OS === 'ios') {
+    const options = ['Take photo', 'Choose from library', ...(hasPhoto ? ['Remove photo'] : []), 'Cancel'];
+    ActionSheetIOS.showActionSheetWithOptions(
       {
-        text: 'Clear',
-        style: 'destructive',
-        onPress: () => clearProfile(),
+        title: 'Profile photo',
+        options,
+        cancelButtonIndex: options.length - 1,
+        destructiveButtonIndex: hasPhoto ? 2 : undefined,
       },
+      (index) => {
+        if (index === 0) void pickPhoto('camera');
+        else if (index === 1) void pickPhoto('library');
+        else if (hasPhoto && index === 2) confirmRemovePhoto();
+      },
+    );
+    return;
+  }
+  Alert.alert(
+    'Profile photo',
+    undefined,
+    [
+      ...(hasPhoto ? [{ text: 'Remove', style: 'destructive' as const, onPress: confirmRemovePhoto }] : []),
+      { text: 'Take photo', onPress: () => void pickPhoto('camera') },
+      { text: 'Choose photo', onPress: () => void pickPhoto('library') },
     ],
+    { cancelable: true },
   );
 }
 
@@ -139,6 +206,7 @@ export default function ProfileScreen() {
   }[strava.status];
 
   const initials = getInitials(profile.displayName);
+  const photoEditable = canHaveProfilePhoto();
   // All-time counts from the server (history below shows only the most recent credits).
   const { earned, redeemed } = totals;
   const recent = history
@@ -160,8 +228,25 @@ export default function ProfileScreen() {
 
         {/* Runner identity */}
         <View style={styles.identity}>
-          <View style={[styles.avatar, { backgroundColor: colors.hero }]}>
-            {initials ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={profile.avatarUrl ? 'Change profile photo' : 'Add profile photo'}
+            disabled={!photoEditable || profile.avatarBusy}
+            onPress={() => openPhotoMenu(profile.avatarPath !== null)}
+            style={({ pressed }) => [
+              styles.avatar,
+              { backgroundColor: colors.hero },
+              pressed && styles.pressed,
+            ]}>
+            {profile.avatarUrl ? (
+              <Image
+                source={{ uri: profile.avatarUrl, cacheKey: profile.avatarPath ?? undefined }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                transition={150}
+                accessibilityIgnoresInvertColors
+              />
+            ) : initials ? (
               <Text style={[styles.initials, { color: colors.heroText }]}>{initials}</Text>
             ) : (
               <>
@@ -169,24 +254,33 @@ export default function ProfileScreen() {
                 <View style={[styles.glyphBody, { backgroundColor: colors.heroText }]} />
               </>
             )}
-          </View>
+            {profile.avatarBusy && (
+              <View style={styles.avatarBusy}>
+                <ActivityIndicator color={colors.heroText} />
+              </View>
+            )}
+          </Pressable>
           <View style={styles.identityText}>
             <Text style={[styles.label, { color: colors.textMuted }]}>PROFILE</Text>
-            {/* Keyed on the saved name so clearing data resets the field. */}
+            {/* Keyed on the saved name so the field follows the account (and a failed save reverts). */}
             <TextInput
               key={profile.displayName}
               defaultValue={profile.displayName}
               placeholder="Add your name"
               placeholderTextColor={colors.textMuted}
-              onEndEditing={(event) => setDisplayName(event.nativeEvent.text)}
-              maxLength={30}
+              onEndEditing={async (event) =>
+                reportIfFailed(await setDisplayName(event.nativeEvent.text))
+              }
+              maxLength={DISPLAY_NAME_MAX}
               autoCapitalize="words"
               autoCorrect={false}
               returnKeyType="done"
               accessibilityLabel="Display name"
               style={[styles.nameInput, { color: colors.text }]}
             />
-            <Text style={[styles.hint, { color: colors.textMuted }]}>Tap your name to edit</Text>
+            <Text style={[styles.hint, { color: colors.textMuted }]}>
+              {photoEditable ? 'Tap your photo or name to edit' : 'Tap your name to edit'}
+            </Text>
           </View>
         </View>
 
@@ -294,13 +388,6 @@ export default function ProfileScreen() {
           onPress={() => Linking.openSettings()}
           colors={colors}
         />
-        <SettingRow
-          title="Clear profile data"
-          detail="Removes your name from this phone"
-          action="Clear"
-          onPress={confirmClearData}
-          colors={colors}
-        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -343,6 +430,16 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '600',
     letterSpacing: 1,
+  },
+  avatarBusy: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
   },
   glyphHead: {
     width: 24,

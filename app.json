@@ -47,6 +47,14 @@
           "color": "#2F5130",
           "defaultChannel": "rewards"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "RUN uses your photos so you can choose a profile picture.",
+          "cameraPermission": "RUN uses your camera so you can take a profile picture.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

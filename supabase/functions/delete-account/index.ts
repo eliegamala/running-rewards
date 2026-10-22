@@ -1,6 +1,6 @@
 /**
  * Permanently deletes the signed-in runner's account and everything stored for them:
- * rewards, Strava connection and activities, and push tokens (all cascade from auth.users).
+ * profile and photo, rewards, Strava connection and activities, and push tokens.
  * Strava access is revoked as well.
  *
  * The caller is verified in code with Supabase Auth (config.toml sets verify_jwt = false),
@@ -38,6 +38,18 @@ Deno.serve(async (req) => {
       api: ctx.api,
       cipher: ctx.cipher,
       now: Date.now,
+      async removeUserFiles(id) {
+        const bucket = ctx.admin.storage.from('avatars');
+        const { data, error } = await bucket.list(id, { limit: 100 });
+        if (error) {
+          logError('account.delete.files', error);
+          return { ok: false };
+        }
+        if (!data || data.length === 0) return { ok: true };
+        const { error: removeError } = await bucket.remove(data.map((f) => `${id}/${f.name}`));
+        if (removeError) logError('account.delete.files', removeError);
+        return { ok: !removeError };
+      },
       async deleteUser(id) {
         const { error } = await ctx.admin.auth.admin.deleteUser(id);
         if (error) logError('account.delete.user', error);
