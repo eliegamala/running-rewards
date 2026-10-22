@@ -21,6 +21,7 @@ import { ProfileAvatar } from '@/components/profile-avatar';
 import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
 import { formatClockTime } from '@/hooks/use-reward-credit';
 import { getAuthState, logOut, subscribe as subscribeToAuth } from '@/lib/auth';
+import { getIsAdmin, subscribe as subscribeToAdmin } from '@/lib/admin';
 import { getStravaState, subscribe as subscribeToStrava } from '@/lib/strava';
 import {
   canReceiveRemotePush,
@@ -173,6 +174,7 @@ export default function ProfileScreen() {
   const totals = useSyncExternalStore(subscribeToHistory, getRewardTotals);
   const auth = useSyncExternalStore(subscribeToAuth, getAuthState);
   const strava = useSyncExternalStore(subscribeToStrava, getStravaState);
+  const isAdmin = useSyncExternalStore(subscribeToAdmin, getIsAdmin);
   const notificationPermission = useSyncExternalStore(
     subscribeToNotifications,
     getNotificationPermission,
@@ -335,6 +337,15 @@ export default function ProfileScreen() {
           onPress={() => router.push('/strava')}
           colors={colors}
         />
+        {isAdmin && (
+          <SettingRow
+            title="Admin"
+            detail="Rewards stats and cafés"
+            action="Open ›"
+            onPress={() => router.push('/admin')}
+            colors={colors}
+          />
+        )}
         {!auth.devPreview && (
           <SettingRow
             title="Delete account"
