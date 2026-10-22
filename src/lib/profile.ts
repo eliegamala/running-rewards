@@ -70,6 +70,11 @@ function saveCache(userId: string) {
 
 const NETWORK_MESSAGE = "Couldn't reach the server. Check your connection and try again.";
 
+/** Development only: the server's reason (never tokens), to tell a network blip from a bug. */
+function warnInDev(step: string, error: { message?: string } | null) {
+  if (__DEV__ && error) console.warn(`[profile] ${step} failed: ${error.message ?? 'unknown error'}`);
+}
+
 async function signedUrlFor(path: string) {
   if (!supabase) return null;
   const { data } = await supabase.storage.from(AVATAR_BUCKET).createSignedUrl(path, SIGNED_URL_SECONDS);
@@ -79,6 +84,7 @@ async function signedUrlFor(path: string) {
 async function saveProfileRow(userId: string, row: { display_name?: string; avatar_path?: string | null }) {
   if (!supabase) return false;
   const { error } = await supabase.from('profiles').upsert({ user_id: userId, ...row });
+  warnInDev('save profile', error);
   return !error;
 }
 
@@ -169,7 +175,10 @@ export async function setProfilePhoto(uri: string): Promise<ProfileResult> {
     const { error: uploadError } = await supabase.storage
       .from(AVATAR_BUCKET)
       .upload(path, bytes, { contentType: 'image/jpeg' });
-    if (uploadError) return { ok: false, message: `Your photo wasn't saved. ${NETWORK_MESSAGE}` };
+    if (uploadError) {
+      warnInDev('upload photo', uploadError);
+      return { ok: false, message: `Your photo wasn't saved. ${NETWORK_MESSAGE}` };
+    }
 
     if (!(await saveProfileRow(userId, { avatar_path: path }))) {
       await removeStoredPhoto(path);
@@ -182,7 +191,8 @@ export async function setProfilePhoto(uri: string): Promise<ProfileResult> {
     }
     if (previousPath && previousPath !== path) await removeStoredPhoto(previousPath);
     return { ok: true };
-  } catch {
+  } catch (error) {
+    warnInDev('prepare photo', error instanceof Error ? error : null);
     return { ok: false, message: "That photo couldn't be used. Try a different one." };
   } finally {
     update({ avatarBusy: false });

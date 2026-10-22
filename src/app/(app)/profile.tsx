@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useSyncExternalStore } from 'react';
@@ -18,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ProfileAvatar } from '@/components/profile-avatar';
 import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
 import { formatClockTime } from '@/hooks/use-reward-credit';
 import { getAuthState, logOut, subscribe as subscribeToAuth } from '@/lib/auth';
@@ -52,15 +52,6 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 function formatDate(timestamp: number) {
   const date = new Date(timestamp);
   return `${DAYS[date.getDay()]} ${date.getDate()} ${MONTHS[date.getMonth()]} · ${formatClockTime(timestamp)}`;
-}
-
-function getInitials(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join('');
 }
 
 function confirmLogOut() {
@@ -205,7 +196,6 @@ export default function ProfileScreen() {
     unavailable: 'Needs a signed-in account',
   }[strava.status];
 
-  const initials = getInitials(profile.displayName);
   const photoEditable = canHaveProfilePhoto();
   // All-time counts from the server (history below shows only the most recent credits).
   const { earned, redeemed } = totals;
@@ -233,32 +223,14 @@ export default function ProfileScreen() {
             accessibilityLabel={profile.avatarUrl ? 'Change profile photo' : 'Add profile photo'}
             disabled={!photoEditable || profile.avatarBusy}
             onPress={() => openPhotoMenu(profile.avatarPath !== null)}
-            style={({ pressed }) => [
-              styles.avatar,
-              { backgroundColor: colors.hero },
-              pressed && styles.pressed,
-            ]}>
-            {profile.avatarUrl ? (
-              <Image
-                source={{ uri: profile.avatarUrl, cacheKey: profile.avatarPath ?? undefined }}
-                style={StyleSheet.absoluteFill}
-                contentFit="cover"
-                transition={150}
-                accessibilityIgnoresInvertColors
-              />
-            ) : initials ? (
-              <Text style={[styles.initials, { color: colors.heroText }]}>{initials}</Text>
-            ) : (
-              <>
-                <View style={[styles.glyphHead, { backgroundColor: colors.heroText }]} />
-                <View style={[styles.glyphBody, { backgroundColor: colors.heroText }]} />
-              </>
-            )}
-            {profile.avatarBusy && (
-              <View style={styles.avatarBusy}>
-                <ActivityIndicator color={colors.heroText} />
-              </View>
-            )}
+            style={({ pressed }) => pressed && styles.pressed}>
+            <ProfileAvatar size={76} colors={colors}>
+              {profile.avatarBusy && (
+                <View style={styles.avatarBusy}>
+                  <ActivityIndicator color={colors.heroText} />
+                </View>
+              )}
+            </ProfileAvatar>
           </Pressable>
           <View style={styles.identityText}>
             <Text style={[styles.label, { color: colors.textMuted }]}>PROFILE</Text>
@@ -417,20 +389,6 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     marginTop: Spacing.four,
   },
-  avatar: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  initials: {
-    fontFamily: Fonts.rounded,
-    fontSize: 28,
-    fontWeight: '600',
-    letterSpacing: 1,
-  },
   avatarBusy: {
     position: 'absolute',
     top: 0,
@@ -440,19 +398,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
-  },
-  glyphHead: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    marginTop: 14,
-  },
-  glyphBody: {
-    width: 44,
-    height: 24,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    marginTop: 4,
   },
   identityText: {
     flex: 1,
