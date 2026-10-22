@@ -15,12 +15,11 @@ export const REFRESH_MARGIN_MS = 5 * 60 * 1000;
  * Per-user cooldown between manual syncs; within it, nothing is requested from Strava.
  */
 export const SYNC_COOLDOWN_MS = 5 * 60 * 1000;
-/** Furthest back any sync looks (first sync after connecting). */
-export const SYNC_WINDOW_DAYS = 30;
-/** Later syncs re-check this much before the newest known activity, for late uploads. */
-export const SYNC_OVERLAP_DAYS = 2;
-/** One page per sync. */
-export const SYNC_PAGE_SIZE = 30;
+/**
+ * Each sync reads only the runner's newest activities (one request). Only the most recent
+ * run can ever earn a reward, so there is nothing to gain from looking further back.
+ */
+export const SYNC_PAGE_SIZE = 5;
 
 export const REWARD_DISTANCE_M = 5000;
 /**
@@ -190,17 +189,6 @@ export function isInSyncCooldown(lastSyncedAt: string | null, now: number) {
   return lastSyncedAt !== null && now - Date.parse(lastSyncedAt) < SYNC_COOLDOWN_MS;
 }
 
-/**
- * Start of the sync window (epoch seconds): only activities since the newest one we
- * already have (minus an overlap for late uploads), never more than SYNC_WINDOW_DAYS back.
- */
-export function syncAfterEpoch(latestStartDate: string | null, now: number) {
-  const day = 24 * 60 * 60 * 1000;
-  const floor = now - SYNC_WINDOW_DAYS * day;
-  const latest = latestStartDate ? Date.parse(latestStartDate) : NaN;
-  const from = Number.isFinite(latest) ? Math.max(latest - SYNC_OVERLAP_DAYS * day, floor) : floor;
-  return Math.floor(from / 1000);
-}
 
 export type WebhookPlan = 'revoke' | 'soft_delete' | 'rename' | 'fetch' | 'skip';
 

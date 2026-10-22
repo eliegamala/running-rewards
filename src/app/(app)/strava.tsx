@@ -43,6 +43,13 @@ const STATUS_LABELS = {
   unavailable: 'NOT AVAILABLE',
 } as const;
 
+/** Why a 5 km+ activity didn't earn a reward. */
+const DECISION_LABELS: Record<string, string> = {
+  not_recent: 'Not a new run',
+  active_reward: 'Reward already active',
+  same_run: 'Rewarded in the app',
+};
+
 /** Strava connection status and recent activities, all read from the server. */
 export default function StravaScreen() {
   const colors = usePalette();
@@ -168,9 +175,8 @@ export default function StravaScreen() {
           <>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>LIVE FROM STRAVA</Text>
             <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
-              Your activities from the last 30 days. A recorded run or walk of{' '}
-              {REWARD_DISTANCE_KM} km or more unlocks a reward when it syncs within 3 hours of
-              finishing and you don&apos;t already have an active reward.
+              Your 5 most recent activities. Only the run or walk of {REWARD_DISTANCE_KM} km or
+              more that you&apos;ve just finished unlocks a reward. Older runs never do.
             </Text>
 
             {strava.activities === null ? (
@@ -201,13 +207,17 @@ export default function StravaScreen() {
                     <Text style={[styles.distance, { color: colors.text }]}>
                       {(activity.distance_m / 1000).toFixed(2)} km
                     </Text>
-                    {activity.qualifies && (
+                    {activity.reward_decision === 'earned' ? (
                       <View style={[styles.pill, { backgroundColor: StravaBrand.orange }]}>
                         <Text style={[styles.pillText, { color: StravaBrand.onOrange }]}>
-                          {activity.reward_decision === 'earned' ? 'REWARD EARNED' : 'QUALIFIES'}
+                          REWARD EARNED
                         </Text>
                       </View>
-                    )}
+                    ) : activity.qualifies && activity.reward_decision ? (
+                      <Text style={[styles.rowMeta, { color: colors.textMuted }]}>
+                        {DECISION_LABELS[activity.reward_decision] ?? 'No reward'}
+                      </Text>
+                    ) : null}
                   </View>
                 </View>
               ))

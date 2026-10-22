@@ -29,7 +29,7 @@ export type StravaActivity = {
   start_date: string | null;
   is_manual: boolean;
   qualifies: boolean;
-  /** Server's reward decision: 'earned', 'active_reward', 'not_recent', or null. */
+  /** Server's decision: 'earned', 'active_reward', 'not_recent', 'same_run', or null. */
   reward_decision: string | null;
 };
 
@@ -195,7 +195,7 @@ export async function loadStravaActivities() {
     .select('activity_id, name, sport_type, distance_m, start_date, is_manual, qualifies, reward_decision')
     .is('deleted_at', null)
     .order('start_date', { ascending: false })
-    .limit(20);
+    .limit(5);
   if (!error) update({ activities: (data ?? []) as StravaActivity[] });
   return error ? { ok: false as const } : { ok: true as const };
 }

@@ -2,7 +2,7 @@
  * Authenticated Strava actions for the signed-in runner:
  *   connect    → returns Strava's authorize URL with a single-use, user-bound state
  *   status     → connection status (never tokens)
- *   sync       → fetches recent activities from Strava and records them idempotently
+ *   sync       → fetches the newest activities from Strava and records them idempotently
  *   disconnect → revokes access at Strava and removes the stored connection
  *
  * The caller is verified in code with Supabase Auth (config.toml sets verify_jwt = false).
@@ -29,7 +29,6 @@ import {
   STATE_TTL_MS,
   SYNC_COOLDOWN_MS,
   SYNC_PAGE_SIZE,
-  syncAfterEpoch,
   type ActivityRecord,
 } from '../_shared/strava-logic.ts';
 import { getValidAccessToken, StravaNotConnectedError } from '../_shared/tokens.ts';
@@ -91,19 +90,9 @@ async function sync(ctx: ServerContext, userId: string) {
     now: () => now,
   });
 
-  // Incremental: only activities since the newest one already stored.
-  const { data: latest } = await ctx.admin
-    .from('strava_activities')
-    .select('start_date')
-    .eq('user_id', userId)
-    .order('start_date', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  const after = syncAfterEpoch(latest?.start_date ?? null, now);
-
   let raw: unknown[];
   try {
-    raw = await ctx.api.listActivities(accessToken, after, SYNC_PAGE_SIZE);
+    raw = await ctx.api.listActivities(accessToken, SYNC_PAGE_SIZE);
   } catch (error) {
     if (error instanceof StravaApiError && error.kind === 'unauthorized') {
       await store.markRevoked(userId);

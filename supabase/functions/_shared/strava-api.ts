@@ -114,8 +114,9 @@ export function createStravaApi(credentials: StravaCredentials, fetchFn: FetchLi
       });
     },
 
-    async listActivities(accessToken: string, afterEpochSeconds: number, perPage = 50) {
-      const url = `${STRAVA_API}/athlete/activities?after=${afterEpochSeconds}&per_page=${perPage}`;
+    /** The athlete's newest activities, newest first. */
+    async listActivities(accessToken: string, perPage: number) {
+      const url = `${STRAVA_API}/athlete/activities?per_page=${perPage}`;
       const response = await request(fetchFn, url, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
