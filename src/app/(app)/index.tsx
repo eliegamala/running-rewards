@@ -1,5 +1,5 @@
 import { Link, router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import {
   Image,
   Pressable,
@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CupArt } from '@/components/cup-art';
-import { StoreLocationDetails } from '@/components/store-location';
+import { ProfileAvatar } from '@/components/profile-avatar';
 import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
 import {
   formatClockTime,
@@ -21,15 +21,23 @@ import {
   formatKm,
   useRewardCredit,
 } from '@/hooks/use-reward-credit';
+import {
+  distanceToStore,
+  formatDistance,
+  getNearbyState,
+  refreshNearby,
+  sortByDistance,
+  subscribe as subscribeToNearby,
+} from '@/lib/nearby';
 import { REWARD_DISTANCE_KM, type RewardStatus } from '@/lib/reward-credit';
 import {
   CATEGORIES,
   getCategory,
-  getPrimaryLocation,
   getStore,
-  STORES,
+  getStoresState,
   type Store,
   type StoreCategory,
+  subscribe as subscribeToStores,
 } from '@/lib/stores';
 
 const GUTTER = Spacing.four;
@@ -168,7 +176,7 @@ function StoreCard({ store, width, dark, colors, showProductImage = false }: Sto
   const muted = dark ? colors.heroMuted : colors.textMuted;
 
   return (
-    <Link href="/rewards" asChild>
+    <Link href={{ pathname: '/store/[id]', params: { id: store.id } }} asChild>
       <Pressable
         accessibilityLabel={`${store.name}, ${store.reward} with a ${REWARD_DISTANCE_KM} kilometre reward`}
         style={({ pressed }) => [
@@ -184,9 +192,9 @@ function StoreCard({ store, width, dark, colors, showProductImage = false }: Sto
         </Text>
 
         <View style={styles.storeArt}>
-          {showProductImage && store.productImage ? (
+          {showProductImage && store.productImageUrl ? (
             <Image
-              source={store.productImage}
+              source={{ uri: store.productImageUrl }}
               resizeMode="contain"
               accessibilityIgnoresInvertColors
               style={{ width: width * 0.56, height: width * 0.56 }}
@@ -234,6 +242,9 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const [greeting] = useState(getGreeting);
   const [selectedCategory, setSelectedCategory] = useState<StoreCategory>('coffee');
+  const { stores, status: storesStatus } = useSyncExternalStore(subscribeToStores, getStoresState);
+  const nearby = useSyncExternalStore(subscribeToNearby, getNearbyState);
+  const storesWithPhotos = stores.filter((store) => store.productImageUrl);
 
   // Scale key elements with the screen so the layout holds from iPhone mini to Pro Max.
   const headlineSize = Math.min(Math.round(width * 0.115), 52);
@@ -241,9 +252,15 @@ export default function HomeScreen() {
   const heroArtSize = heroWidth * 0.88;
   const cardWidth = Math.min(Math.round(width * 0.6), 280);
 
-  // "Find your ritual" lists the participating spots for the chosen category.
+  // Category tiles: two per row, sized to the screen.
+  const tileWidth = Math.floor((width - GUTTER * 2 - Spacing.two) / 2);
+  // "Find your ritual": spots for the chosen craving, nearest first.
   const ritual = getCategory(selectedCategory);
-  const ritualStores = STORES.filter((store) => store.category === selectedCategory);
+  const ritualStores = sortByDistance(
+    stores.filter((store) => store.category === selectedCategory),
+    nearby,
+  );
+  const countFor = (id: StoreCategory) => stores.filter((store) => store.category === id).length;
 
   const { credit, status, remainingMs, kmToUnlock } = useRewardCredit();
   const hero = getHeroCopy(
@@ -272,22 +289,16 @@ export default function HomeScreen() {
           <View style={styles.topActions}>
             <View style={[styles.topPill, { borderColor: colors.border }]}>
               <Text style={[styles.topPillText, { color: colors.textMuted }]}>
-                {STORES.length} spots to run to
+                {stores.length === 1 ? '1 spot' : `${stores.length} spots`} to run to
               </Text>
             </View>
-            {/* Profile glyph drawn with Views, so no icon package is needed. */}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Profile"
               onPress={() => router.navigate('/profile')}
               hitSlop={8}
-              style={({ pressed }) => [
-                styles.profileButton,
-                { backgroundColor: colors.hero },
-                pressed && styles.pressed,
-              ]}>
-              <View style={[styles.profileHead, { backgroundColor: colors.heroText }]} />
-              <View style={[styles.profileBody, { backgroundColor: colors.heroText }]} />
+              style={({ pressed }) => pressed && styles.pressed}>
+              <ProfileAvatar size={36} colors={colors} />
             </Pressable>
           </View>
         </View>
@@ -407,11 +418,15 @@ export default function HomeScreen() {
           <SectionTitle
             lead="Worth the"
             accent="run"
-            count={String(STORES.length).padStart(2, '0')}
+            count={String(stores.length).padStart(2, '0')}
             colors={colors}
           />
           <Text style={[styles.sectionCopy, { color: colors.textMuted }]}>
-            Run {REWARD_DISTANCE_KM} km, then pick any one of these for your reward.
+            {storesStatus === 'loading'
+              ? 'Loading the spots…'
+              : storesStatus === 'error'
+                ? "Couldn't load the spots. Check your connection."
+                : `Run ${REWARD_DISTANCE_KM} km, then pick any one of these for your reward.`}
           </Text>
         </View>
         <ScrollView
@@ -420,7 +435,7 @@ export default function HomeScreen() {
           snapToInterval={cardWidth + Spacing.three}
           decelerationRate="fast"
           contentContainerStyle={styles.carousel}>
-          {STORES.map((store, index) => (
+          {stores.map((store, index) => (
             <StoreCard
               key={store.id}
               store={store}
@@ -431,12 +446,14 @@ export default function HomeScreen() {
           ))}
         </ScrollView>
 
-        {/* Worth the run, with product photos (same structure as above) */}
+        {/* Worth the run, with product photos (only spots that have one) */}
+        {storesWithPhotos.length > 0 && (
+          <>
         <View style={[styles.section, styles.sectionSpacing]}>
           <SectionTitle
             lead="Poured at the"
             accent="finish"
-            count={String(STORES.length).padStart(2, '0')}
+            count={String(storesWithPhotos.length).padStart(2, '0')}
             colors={colors}
           />
           <Text style={[styles.sectionCopy, { color: colors.textMuted }]}>
@@ -449,7 +466,7 @@ export default function HomeScreen() {
           snapToInterval={cardWidth + Spacing.three}
           decelerationRate="fast"
           contentContainerStyle={styles.carousel}>
-          {STORES.map((store, index) => (
+          {storesWithPhotos.map((store, index) => (
             <StoreCard
               key={store.id}
               store={store}
@@ -460,105 +477,131 @@ export default function HomeScreen() {
             />
           ))}
         </ScrollView>
+          </>
+        )}
 
-        {/* Categories */}
+        {/* Find your ritual: pick a craving, see the nearest spots for it */}
         <View style={[styles.section, styles.sectionSpacing]}>
           <SectionTitle lead="Find your" accent="ritual" colors={colors} />
-        </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryRow}>
-          {CATEGORIES.map((category) => {
-            const isSelected = category.id === selectedCategory;
-            return (
-              <Pressable
-                key={category.id}
-                accessibilityRole="button"
-                accessibilityState={{ selected: isSelected }}
-                onPress={() => setSelectedCategory(category.id)}
-                style={[
-                  styles.categoryPill,
-                  isSelected
-                    ? { backgroundColor: colors.hero, borderColor: colors.hero }
-                    : { borderColor: colors.border },
-                ]}>
-                <Text style={styles.categoryEmoji}>{category.emoji}</Text>
-                <Text
-                  style={[
-                    styles.categoryLabel,
-                    { color: isSelected ? colors.heroText : colors.text },
-                  ]}>
-                  {category.label}
-                </Text>
-                <Text
-                  style={[
-                    styles.categoryCount,
-                    { color: isSelected ? colors.heroMuted : colors.textMuted },
-                  ]}>
-                  {STORES.filter((store) => store.category === category.id).length}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <View style={[styles.section, styles.ritualList]}>
-          {ritualStores.length === 0 ? (
-            <View style={[styles.ritualEmpty, { backgroundColor: colors.surface }]}>
-              <Text style={[styles.ritualName, { color: colors.text }]}>
-                No {ritual.label.toLowerCase()} spots yet
-              </Text>
-              <Text style={[styles.ritualReward, { color: colors.textMuted }]}>
-                We&apos;re adding more places to run to. Any {REWARD_DISTANCE_KM} km run still
-                unlocks a reward at the spots above.
-              </Text>
-            </View>
-          ) : (
-            ritualStores.map((store) => (
-              <Link key={store.id} href="/rewards" asChild>
+          <Text style={[styles.sectionCopy, { color: colors.textMuted }]}>
+            What are you running for?
+          </Text>
+          <View style={styles.tileGrid}>
+            {CATEGORIES.map((category) => {
+              const count = countFor(category.id);
+              const isSelected = category.id === selectedCategory;
+              return (
                 <Pressable
-                  accessibilityLabel={`${store.name}, ${store.reward}`}
+                  key={category.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected, disabled: count === 0 }}
+                  accessibilityLabel={`${category.label}, ${count === 0 ? 'coming soon' : `${count} spots`}`}
+                  disabled={count === 0}
+                  onPress={() => setSelectedCategory(category.id)}
                   style={({ pressed }) => [
-                    styles.ritualRow,
-                    { borderTopColor: colors.border },
-                    pressed && styles.ritualRowPressed,
+                    styles.tile,
+                    { width: tileWidth, backgroundColor: isSelected ? colors.hero : colors.surface },
+                    count === 0 && styles.tileSoon,
+                    pressed && styles.pressed,
                   ]}>
-                  <View style={[styles.ritualThumb, { backgroundColor: colors.surface }]}>
-                    {store.productImage ? (
-                      <Image
-                        source={store.productImage}
-                        resizeMode="contain"
-                        accessibilityIgnoresInvertColors
-                        style={styles.ritualImage}
-                      />
-                    ) : (
-                      <CupArt
-                        size={40}
-                        category={store.category}
-                        saucerColor="rgba(255, 255, 255, 0.6)"
-                      />
-                    )}
-                  </View>
-                  <View style={styles.ritualText}>
-                    <Text style={[styles.ritualName, { color: colors.text }]}>{store.name}</Text>
-                    <Text style={[styles.ritualReward, { color: colors.textMuted }]}>
-                      {store.reward}
+                  <Text style={styles.tileEmoji}>{category.emoji}</Text>
+                  <View>
+                    <Text
+                      style={[styles.tileLabel, { color: isSelected ? colors.heroText : colors.text }]}
+                      numberOfLines={1}>
+                      {category.label}
                     </Text>
-                    <StoreLocationDetails
-                      location={getPrimaryLocation(store)}
-                      variant="row"
-                      textColor={colors.text}
-                      mutedColor={colors.textMuted}
-                    />
-                  </View>
-                  <View style={[styles.ritualArrow, { backgroundColor: colors.hero }]}>
-                    <Text style={[styles.arrow, { color: colors.heroText }]}>→</Text>
+                    <Text
+                      style={[
+                        styles.tileCount,
+                        { color: isSelected ? colors.heroMuted : colors.textMuted },
+                      ]}>
+                      {count === 0 ? 'Coming soon' : count === 1 ? '1 spot' : `${count} spots`}
+                    </Text>
                   </View>
                 </Pressable>
-              </Link>
-            ))
+              );
+            })}
+          </View>
+
+          {nearby.permission === 'undetermined' && ritualStores.length > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void refreshNearby({ ask: true })}
+              style={({ pressed }) => [
+                styles.nearestButton,
+                { borderColor: colors.border },
+                pressed && styles.pressed,
+              ]}>
+              <Text style={[styles.nearestText, { color: colors.text }]}>📍 Show nearest first</Text>
+            </Pressable>
           )}
+
+          <View style={styles.ritualList}>
+            {ritualStores.length === 0 ? (
+              <View style={[styles.ritualEmpty, { backgroundColor: colors.surface }]}>
+                <Text style={[styles.ritualName, { color: colors.text }]}>
+                  No {ritual.label.toLowerCase()} spots yet
+                </Text>
+                <Text style={[styles.ritualReward, { color: colors.textMuted }]}>
+                  We&apos;re adding more places to run to.
+                </Text>
+              </View>
+            ) : (
+              ritualStores.map((store) => {
+                const metres = distanceToStore(store, nearby);
+                return (
+                  <Link
+                    key={store.id}
+                    href={{ pathname: '/store/[id]', params: { id: store.id } }}
+                    asChild>
+                    <Pressable
+                      accessibilityLabel={`${store.name}, ${store.reward}${metres !== null ? `, ${formatDistance(metres)} away` : ''}`}
+                      style={({ pressed }) => [
+                        styles.ritualRow,
+                        { borderTopColor: colors.border },
+                        pressed && styles.ritualRowPressed,
+                      ]}>
+                      <View style={[styles.ritualThumb, { backgroundColor: colors.surface }]}>
+                        {store.productImageUrl ? (
+                          <Image
+                            source={{ uri: store.productImageUrl }}
+                            resizeMode="contain"
+                            accessibilityIgnoresInvertColors
+                            style={styles.ritualImage}
+                          />
+                        ) : (
+                          <CupArt
+                            size={40}
+                            category={store.category}
+                            saucerColor="rgba(255, 255, 255, 0.6)"
+                          />
+                        )}
+                      </View>
+                      <View style={styles.ritualText}>
+                        <Text style={[styles.ritualName, { color: colors.text }]} numberOfLines={1}>
+                          {store.name}
+                        </Text>
+                        <Text
+                          style={[styles.ritualReward, { color: colors.textMuted }]}
+                          numberOfLines={1}>
+                          {store.reward}
+                        </Text>
+                      </View>
+                      {metres !== null && (
+                        <Text style={[styles.ritualDistance, { color: colors.text }]}>
+                          {formatDistance(metres)}
+                        </Text>
+                      )}
+                      <View style={[styles.ritualArrow, { backgroundColor: colors.hero }]}>
+                        <Text style={[styles.arrow, { color: colors.heroText }]}>→</Text>
+                      </View>
+                    </Pressable>
+                  </Link>
+                );
+              })
+            )}
+          </View>
         </View>
 
         {/* How it works */}
@@ -651,27 +694,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-  },
-  profileButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-  },
-  profileHead: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginBottom: 2,
-  },
-  profileBody: {
-    width: 22,
-    height: 11,
-    borderTopLeftRadius: 11,
-    borderTopRightRadius: 11,
-    marginBottom: -1,
   },
   topPill: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -874,29 +896,48 @@ const styles = StyleSheet.create({
   },
 
   // Categories
-  categoryRow: {
-    paddingHorizontal: GUTTER,
-    paddingTop: Spacing.three,
-    gap: Spacing.two,
-  },
-  categoryPill: {
+  tileGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: 44,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    marginTop: Spacing.three,
   },
-  categoryEmoji: {
-    fontSize: 16,
+  tile: {
+    borderRadius: 24,
+    padding: Spacing.three,
+    minHeight: 112,
+    justifyContent: 'space-between',
   },
-  categoryLabel: {
-    fontSize: 15,
-    fontWeight: '500',
+  tileSoon: {
+    opacity: 0.55,
   },
-  categoryCount: {
+  tileEmoji: {
+    fontSize: 26,
+  },
+  tileLabel: {
+    fontSize: 17,
+    fontWeight: '600',
+    marginTop: Spacing.two,
+  },
+  tileCount: {
     fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  nearestButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    marginTop: Spacing.three,
+  },
+  nearestText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  ritualDistance: {
+    fontSize: 14,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },

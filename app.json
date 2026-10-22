@@ -29,7 +29,7 @@
         "expo-location",
         {
           "isIosBackgroundLocationEnabled": true,
-          "locationWhenInUsePermission": "RUN uses your location to measure distance and pace during a run, including while your screen is locked."
+          "locationWhenInUsePermission": "RUN uses your location to measure distance and pace during a run, including while your screen is locked, and to show the cafés nearest to you."
         }
       ],
       [

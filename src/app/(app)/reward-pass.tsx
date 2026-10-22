@@ -21,7 +21,7 @@ import { StoreLocationDetails } from '@/components/store-location';
 import { Fonts, Palette, Spacing } from '@/constants/theme';
 import { formatClockTime, formatCountdown, useRewardCredit } from '@/hooks/use-reward-credit';
 import { redeemReward, REWARD_DURATION_MS } from '@/lib/reward-credit';
-import { getCategory, getPrimaryLocation, getStore } from '@/lib/stores';
+import { getCategory, getPrimaryLocation, getStore, unlistedStore } from '@/lib/stores';
 
 type RedeemStep = 'confirm' | 'done' | 'unavailable';
 
@@ -40,7 +40,7 @@ export default function RewardPassScreen() {
   const redeemingRef = useRef(false);
 
   const storeId = credit.redeemedStoreId ?? credit.selectedStoreId;
-  const store = storeId ? getStore(storeId) : undefined;
+  const store = storeId ? (getStore(storeId) ?? unlistedStore(storeId)) : undefined;
   const isActive = status === 'unlocked' && store !== undefined;
 
   // Gentle pulse on the status dot so the pass reads as live, not a screenshot.

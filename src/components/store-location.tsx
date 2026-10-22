@@ -1,7 +1,7 @@
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Spacing } from '@/constants/theme';
-import type { StoreLocation } from '@/lib/stores';
+import { mapsUrlFor, type StoreLocation } from '@/lib/stores';
 
 async function openGoogleMaps(url: string) {
   try {
@@ -21,7 +21,7 @@ type StoreLocationDetailsProps = {
   borderColor?: string;
 };
 
-/** Where a reward can be redeemed, with a Google Maps link when one has been supplied. */
+/** Where a reward can be redeemed, with a Google Maps link once there is an address. */
 export function StoreLocationDetails({
   location,
   textColor,
@@ -30,7 +30,7 @@ export function StoreLocationDetails({
   borderColor,
 }: StoreLocationDetailsProps) {
   const isPass = variant === 'pass';
-  const { googleMapsUrl } = location;
+  const googleMapsUrl = mapsUrlFor(location);
 
   return (
     <View style={isPass ? styles.passContainer : styles.rowContainer}>

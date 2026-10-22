@@ -1,5 +1,5 @@
 import { Link, router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -20,7 +20,21 @@ import {
   useRewardCredit,
 } from '@/hooks/use-reward-credit';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
-import { getCategory, getPrimaryLocation, getStore, STORES, type Store } from '@/lib/stores';
+import {
+  distanceToStore,
+  formatDistance,
+  getNearbyState,
+  sortByDistance,
+  subscribe as subscribeToNearby,
+} from '@/lib/nearby';
+import {
+  getCategory,
+  getPrimaryLocation,
+  getStore,
+  getStoresState,
+  type Store,
+  subscribe as subscribeToStores,
+} from '@/lib/stores';
 
 // Where the runner spends their single reward credit at one participating store.
 export default function RewardsScreen() {
@@ -32,6 +46,10 @@ export default function RewardsScreen() {
   // Unlocked with a store chosen: the live pass is active but not yet redeemed.
   const hasActivePass = status === 'unlocked' && selectedStore !== undefined;
   const [storeToChoose, setStoreToChoose] = useState<Store | null>(null);
+  const { stores } = useSyncExternalStore(subscribeToStores, getStoresState);
+  const nearby = useSyncExternalStore(subscribeToNearby, getNearbyState);
+  // Nearest first once the phone knows where you are; otherwise the list's own order.
+  const sortedStores = sortByDistance(stores, nearby);
 
   const openPass = () => {
     setStoreToChoose(null);
@@ -151,8 +169,9 @@ export default function RewardsScreen() {
             ? 'Choose where to use it'
             : 'Participating spots'}
         </Text>
-        {STORES.map((store) => {
+        {sortedStores.map((store) => {
           const category = getCategory(store.category);
+          const metres = distanceToStore(store, nearby);
           const isUsedHere = status === 'redeemed' && store.id === credit.redeemedStoreId;
           const isPassStore = hasActivePass && store.id === credit.selectedStoreId;
           const isDimmed =
@@ -166,8 +185,15 @@ export default function RewardsScreen() {
               style={[styles.row, { borderTopColor: colors.border }, isDimmed && styles.rowDimmed]}>
               <Text style={styles.rowEmoji}>{category.emoji}</Text>
               <View style={styles.rowText}>
-                <Text style={[styles.rowName, { color: colors.text }]}>{store.name}</Text>
-                <Text style={[styles.rowReward, { color: colors.textMuted }]}>{store.reward}</Text>
+                <Link href={{ pathname: '/store/[id]', params: { id: store.id } }} asChild>
+                  <Pressable accessibilityRole="link" hitSlop={4}>
+                    <Text style={[styles.rowName, { color: colors.text }]}>{store.name} ›</Text>
+                  </Pressable>
+                </Link>
+                <Text style={[styles.rowReward, { color: colors.textMuted }]}>
+                  {store.reward}
+                  {metres !== null ? ` · ${formatDistance(metres)} away` : ''}
+                </Text>
                 <StoreLocationDetails
                   location={getPrimaryLocation(store)}
                   variant="row"
