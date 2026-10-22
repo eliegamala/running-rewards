@@ -124,12 +124,27 @@ export async function logIn(email: string, password: string): Promise<AuthResult
   }
 }
 
+const beforeLogOutHooks = new Set<() => Promise<void>>();
+
+/** Work that needs the session one last time (e.g. unregistering this device's push token). */
+export function onBeforeLogOut(hook: () => Promise<void>) {
+  beforeLogOutHooks.add(hook);
+  return () => {
+    beforeLogOutHooks.delete(hook);
+  };
+}
+
 export async function logOut() {
   if (state.devPreview) {
     update({ devPreview: false });
     return;
   }
   if (!supabase) return;
+  // Best effort, and never allowed to hold up signing out for more than 3 seconds.
+  await Promise.race([
+    Promise.allSettled([...beforeLogOutHooks].map((hook) => hook())),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]);
   try {
     await supabase.auth.signOut();
   } finally {

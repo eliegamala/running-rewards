@@ -4,12 +4,15 @@ import { useSyncExternalStore } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { NotificationTapHandler } from '@/components/notification-tap-handler';
 import { RewardCelebration } from '@/components/reward-celebration';
 import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
 // Registers the background location task at startup, as TaskManager requires.
 import '@/lib/run-tracker';
 // Loads server rewards and starts queuing GPS reward claims before any run can begin.
 import '@/lib/reward-credit';
+// Reward notifications: foreground behaviour, reminders and push registration.
+import '@/lib/notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -38,6 +41,7 @@ export default function RootLayout() {
         </Stack>
       )}
       {canEnterApp && <RewardCelebration />}
+      {canEnterApp && <NotificationTapHandler />}
     </ThemeProvider>
   );
 }

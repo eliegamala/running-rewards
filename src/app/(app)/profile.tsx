@@ -17,6 +17,12 @@ import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
 import { formatClockTime } from '@/hooks/use-reward-credit';
 import { getAuthState, logOut, subscribe as subscribeToAuth } from '@/lib/auth';
 import { getStravaState, subscribe as subscribeToStrava } from '@/lib/strava';
+import {
+  canReceiveRemotePush,
+  getNotificationPermission,
+  openNotificationSettingsOrAsk,
+  subscribe as subscribeToNotifications,
+} from '@/lib/notifications';
 import { clearProfile, getProfile, setDisplayName, subscribe as subscribeToProfile } from '@/lib/profile';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
 import {
@@ -109,6 +115,20 @@ export default function ProfileScreen() {
   const totals = useSyncExternalStore(subscribeToHistory, getRewardTotals);
   const auth = useSyncExternalStore(subscribeToAuth, getAuthState);
   const strava = useSyncExternalStore(subscribeToStrava, getStravaState);
+  const notificationPermission = useSyncExternalStore(
+    subscribeToNotifications,
+    getNotificationPermission,
+  );
+  const alertsDetail =
+    notificationPermission === 'granted'
+      ? canReceiveRemotePush()
+        ? 'On'
+        : 'On for this phone (Strava alerts need the full app build)'
+      : notificationPermission === 'denied'
+        ? 'Off — turn on in Settings'
+        : notificationPermission === 'unavailable'
+          ? 'Not available on this device'
+          : 'Get told when a run unlocks a reward';
   const stravaDetail = {
     connected: 'Connected',
     not_connected: 'Not connected',
@@ -251,6 +271,13 @@ export default function ProfileScreen() {
         />
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>SETTINGS</Text>
+        <SettingRow
+          title="Reward alerts"
+          detail={alertsDetail}
+          action={notificationPermission === 'undetermined' ? 'Turn on ›' : 'Settings ›'}
+          onPress={() => void openNotificationSettingsOrAsk()}
+          colors={colors}
+        />
         <SettingRow
           title="Location access"
           detail="Used to measure your runs"

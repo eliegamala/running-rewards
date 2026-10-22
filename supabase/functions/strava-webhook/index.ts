@@ -12,6 +12,7 @@
  * background. Duplicate deliveries are harmless because activity writes are idempotent.
  */
 import { createTokenStore, json, loadContext, logError, text, type ServerContext } from '../_shared/server.ts';
+import { notifyStravaDisconnected, notifyUnlockedRewards } from '../_shared/notify.ts';
 import { StravaApiError } from '../_shared/strava-api.ts';
 import { normalizeActivity, planWebhookEvent, safeEqual } from '../_shared/strava-logic.ts';
 import { getValidAccessToken, StravaNotConnectedError } from '../_shared/tokens.ts';
@@ -76,6 +77,7 @@ async function processEvent(ctx: ServerContext, event: StravaEvent) {
     // The athlete removed the app on Strava: drop tokens and activity details.
     await store.markRevoked(connection.user_id);
     await ctx.admin.rpc('scrub_strava_activities', { p_user_id: connection.user_id });
+    await notifyStravaDisconnected(ctx, connection.user_id);
     return;
   }
 
@@ -121,10 +123,12 @@ async function processEvent(ctx: ServerContext, event: StravaEvent) {
   if (error) throw new Error('Could not record webhook activity.');
 
   // Decide the reward right away: this is what makes "finish 5 km, reward unlocks" work.
-  const { error: rewardError } = await ctx.admin.rpc('evaluate_strava_rewards', {
+  const { data: earned, error: rewardError } = await ctx.admin.rpc('evaluate_strava_rewards', {
     p_user_id: connection.user_id,
   });
   if (rewardError) throw new Error('Could not evaluate Strava rewards.');
+  // Tell the runner straight away, even if the app is closed.
+  if (earned) await notifyUnlockedRewards(ctx, connection.user_id);
 }
 
 Deno.serve(async (req) => {

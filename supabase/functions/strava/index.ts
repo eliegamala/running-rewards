@@ -16,6 +16,7 @@ import {
   logError,
   type ServerContext,
 } from '../_shared/server.ts';
+import { notifyUnlockedRewards } from '../_shared/notify.ts';
 import { StravaApiError } from '../_shared/strava-api.ts';
 import {
   buildAuthorizeUrl,
@@ -130,6 +131,7 @@ async function sync(ctx: ServerContext, userId: string) {
     p_user_id: userId,
   });
   if (rewardError) throw new Error('Could not evaluate Strava rewards.');
+  if (earned) await notifyUnlockedRewards(ctx, userId);
 
   return json({ synced: activities.length, rewardsEarned: earned ?? 0 });
 }

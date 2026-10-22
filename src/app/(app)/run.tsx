@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
+import { askForNotificationsInContext } from '@/lib/notifications';
 import { formatDuration, formatPace } from '@/lib/run-format';
 import {
   getActiveElapsedMs,
@@ -146,6 +147,7 @@ export default function RunScreen() {
       }
 
       await startRun();
+      void askForNotificationsInContext();
     } catch {
       Alert.alert(
         'Unable to start GPS',

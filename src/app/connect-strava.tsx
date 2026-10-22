@@ -4,6 +4,7 @@ import { useState, useSyncExternalStore } from 'react';
 import { AuthScreen, Notice, PrimaryButton, SecondaryButton } from '@/components/auth-ui';
 import { StravaBrand } from '@/constants/theme';
 import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
+import { askForNotificationsInContext } from '@/lib/notifications';
 import { finishStravaStep } from '@/lib/onboarding';
 import { REWARD_DISTANCE_KM } from '@/lib/reward-credit';
 import { connectStrava, getStravaState, subscribe as subscribeToStrava } from '@/lib/strava';
@@ -29,7 +30,10 @@ export default function ConnectStravaScreen() {
     setMessage(null);
     const result = await connectStrava();
     setConnecting(false);
-    if (result.ok) leave();
+    if (result.ok) {
+      await askForNotificationsInContext();
+      leave();
+    }
     else if (!result.cancelled) setMessage(result.message);
   };
 
