@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { Link, router, useLocalSearchParams } from 'expo-router';
 import { useState, useSyncExternalStore } from 'react';
 import {
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChooseStoreModal } from '@/components/choose-store-modal';
 import { CupArt } from '@/components/cup-art';
 import { StoreLocationDetails } from '@/components/store-location';
+import { StoreLogo } from '@/components/store-logo';
 import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
 import { formatKm, useRewardCredit } from '@/hooks/use-reward-credit';
 import { distanceToStore, formatDistance, getNearbyState, subscribe as subscribeToNearby } from '@/lib/nearby';
@@ -30,7 +32,7 @@ import {
 
 const GUTTER = Spacing.four;
 
-/** Venue photos (up to three, swipeable), else the product photo on the dark green card. */
+/** Venue photos (up to three, swipeable), else the signature product on the dark green card. */
 function Header({ store, width, colors }: { store: Store; width: number; colors: PaletteColors }) {
   const height = Math.min(Math.round(width * 0.82), 420);
   const [page, setPage] = useState(0);
@@ -38,16 +40,12 @@ function Header({ store, width, colors }: { store: Store; width: number; colors:
   if (store.venueImageUrls.length === 0) {
     return (
       <View style={[styles.header, { height, backgroundColor: colors.hero }]}>
-        {store.category === 'run-club' && !store.productImageUrl ? (
-          <CupArt size={height * 0.62} category={store.category} saucerColor="rgba(246, 242, 200, 0.08)" />
-        ) : (
-          <Image
-            source={productImageFor(store)}
-            style={{ width: height * 0.62, height: height * 0.62 }}
-            contentFit="contain"
-            accessibilityIgnoresInvertColors
-          />
-        )}
+        <Image
+          source={productImageFor(store)}
+          style={{ width: height * 0.62, height: height * 0.62 }}
+          contentFit="contain"
+          accessibilityIgnoresInvertColors
+        />
       </View>
     );
   }
@@ -86,7 +84,49 @@ function Header({ store, width, colors }: { store: Store; width: number; colors:
   );
 }
 
-/** Café page: photos, reward, distance, where to find it, and what you can do right now. */
+/** Menu photos full screen: swipe between pages; pinch to zoom on iOS. */
+function MenuViewer({ urls, start, onClose }: { urls: string[]; start: number; onClose: () => void }) {
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.viewer}>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          contentOffset={{ x: start * width, y: 0 }}>
+          {urls.map((uri, index) => (
+            <ScrollView
+              key={uri}
+              style={{ width, height }}
+              contentContainerStyle={styles.viewerPage}
+              maximumZoomScale={4}
+              minimumZoomScale={1}
+              centerContent>
+              <Image
+                source={{ uri }}
+                style={{ width, height: height - insets.top - insets.bottom }}
+                contentFit="contain"
+                accessibilityLabel={`Menu page ${index + 1} of ${urls.length}`}
+              />
+            </ScrollView>
+          ))}
+        </ScrollView>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close menu"
+          onPress={onClose}
+          hitSlop={8}
+          style={[styles.viewerClose, { top: insets.top + Spacing.two }]}>
+          <Text style={styles.viewerCloseText}>✕</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
+/** Café page: photos, reward, best products, menu, distance and where to find it. */
 export default function StoreScreen() {
   const scheme = useColorScheme();
   const colors = Palette[scheme === 'dark' ? 'dark' : 'light'];
@@ -97,6 +137,8 @@ export default function StoreScreen() {
   const nearby = useSyncExternalStore(subscribeToNearby, getNearbyState);
   const { credit, status, kmToUnlock } = useRewardCredit();
   const [choosing, setChoosing] = useState(false);
+  const [menuPage, setMenuPage] = useState<number | null>(null);
+  const productWidth = Math.min(Math.round(width * 0.4), 180);
 
   const store = typeof id === 'string' ? storesState.stores.find((s) => s.id === id) : undefined;
   const goBack = () => (router.canGoBack() ? router.back() : router.replace('/'));
@@ -187,7 +229,10 @@ export default function StoreScreen() {
             )}
           </View>
 
-          <Text style={[styles.name, { color: colors.text }]}>{store.name}</Text>
+          <View style={styles.titleRow}>
+            <StoreLogo store={store} size={60} colors={colors} />
+            <Text style={[styles.name, styles.titleName, { color: colors.text }]}>{store.name}</Text>
+          </View>
           <Text
             style={[
               styles.reward,
@@ -225,43 +270,74 @@ export default function StoreScreen() {
             )}
           </View>
 
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>GOOD TO KNOW</Text>
-          <View style={[styles.facts, { backgroundColor: colors.surface }]}>
-            {[
-              ['🎁', store.rewardConfirmed ? store.reward : 'Reward details coming soon'],
-              ['🏃', `Unlocked by any ${REWARD_DISTANCE_KM} km run or walk`],
-              ['⏱', 'Use it within 1 hour of unlocking'],
-              ['📱', 'Show your live pass at the counter'],
-            ].map(([icon, text]) => (
-              <View key={icon} style={styles.fact}>
-                <Text style={styles.factIcon}>{icon}</Text>
-                <Text style={[styles.factText, { color: colors.text }]}>{text}</Text>
+          {store.products.length > 0 && (
+            <>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>BEST PRODUCTS</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.productRow}
+                style={styles.bleed}>
+                {store.products.map((product, index) => (
+                  <View
+                    key={product.id}
+                    style={[styles.productCard, { width: productWidth, backgroundColor: colors.surface }]}>
+                    <View style={[styles.productImageWrap, { height: productWidth - 24 }]}>
+                      {product.imageUrl ? (
+                        <Image
+                          source={{ uri: product.imageUrl }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="contain"
+                          transition={150}
+                          accessibilityLabel={product.name}
+                        />
+                      ) : (
+                        <CupArt size={productWidth * 0.6} category={store.category} saucerColor="rgba(255, 255, 255, 0.6)" />
+                      )}
+                    </View>
+                    {index === 0 && (
+                      <Text style={[styles.signature, { color: colors.textMuted }]}>SIGNATURE</Text>
+                    )}
+                    <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>
+                      {product.name}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </>
+          )}
+
+          {store.menuImageUrls.length > 0 && (
+            <>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>MENU</Text>
+              <View style={styles.menuRow}>
+                {store.menuImageUrls.map((uri, index) => (
+                  <Pressable
+                    key={uri}
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`Open menu page ${index + 1}`}
+                    onPress={() => setMenuPage(index)}
+                    style={({ pressed }) => [
+                      styles.menuThumb,
+                      { backgroundColor: colors.surface },
+                      pressed && styles.pressed,
+                    ]}>
+                    <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={150} />
+                  </Pressable>
+                ))}
               </View>
-            ))}
-          </View>
+              <Text style={[styles.hint, { color: colors.textMuted }]}>Tap to open the menu.</Text>
+            </>
+          )}
 
           {store.openingHours && (
             <>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                {store.category === 'run-club' ? 'WHEN THEY RUN' : 'OPENING HOURS'}
+                OPENING HOURS
               </Text>
               <Text style={[styles.bodyText, { color: colors.text }]}>{store.openingHours}</Text>
             </>
           )}
-
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>HOW IT WORKS HERE</Text>
-          {[
-            `Run ${REWARD_DISTANCE_KM} km in one go, tracked in the app or Strava.`,
-            `Tap “Use my reward here” to open your live pass for ${store.name}.`,
-            'Show the pass at the counter and let staff confirm it.',
-          ].map((step, index) => (
-            <View key={step} style={[styles.step, { borderTopColor: colors.border }]}>
-              <Text style={[styles.stepNumber, { color: colors.textMuted }]}>
-                {String(index + 1).padStart(2, '0')}
-              </Text>
-              <Text style={[styles.stepText, { color: colors.text }]}>{step}</Text>
-            </View>
-          ))}
 
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
             {store.locations.length > 1 ? 'WHERE TO FIND THEM' : 'WHERE TO FIND IT'}
@@ -296,6 +372,10 @@ export default function StoreScreen() {
       </ScrollView>
 
       {backButton}
+
+      {menuPage !== null && (
+        <MenuViewer urls={store.menuImageUrls} start={menuPage} onClose={() => setMenuPage(null)} />
+      )}
 
       {choosing && (
         <ChooseStoreModal
@@ -439,48 +519,84 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: Spacing.two,
   },
-  facts: {
-    borderRadius: 24,
-    padding: Spacing.three,
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginTop: Spacing.three,
+  },
+  titleName: {
+    flex: 1,
+    marginTop: 0,
+  },
+  bleed: {
+    marginHorizontal: -GUTTER,
+  },
+  productRow: {
+    paddingHorizontal: GUTTER,
+    paddingTop: Spacing.two,
+    gap: Spacing.two,
+  },
+  productCard: {
+    borderRadius: 22,
+    padding: 12,
+  },
+  productImageWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  signature: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    marginTop: Spacing.two,
+  },
+  productName: {
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 20,
+    marginTop: 2,
+  },
+  menuRow: {
+    flexDirection: 'row',
     gap: Spacing.two,
     marginTop: Spacing.two,
   },
-  fact: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.two,
-  },
-  factIcon: {
-    fontSize: 16,
-    width: 24,
-  },
-  factText: {
+  menuThumb: {
     flex: 1,
-    fontSize: 15,
-    lineHeight: 21,
+    maxWidth: 140,
+    aspectRatio: 3 / 4,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  viewer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  viewerPage: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerClose: {
+    position: 'absolute',
+    right: GUTTER,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+  },
+  viewerCloseText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
   bodyText: {
     fontSize: 15,
     lineHeight: 22,
     marginTop: Spacing.two,
-  },
-  step: {
-    flexDirection: 'row',
-    gap: Spacing.three,
-    paddingVertical: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: Spacing.one,
-  },
-  stepNumber: {
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-    paddingTop: 2,
-  },
-  stepText: {
-    flex: 1,
-    fontSize: 15,
-    lineHeight: 21,
   },
   allSpots: {
     marginTop: Spacing.four,

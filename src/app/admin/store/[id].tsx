@@ -7,7 +7,9 @@ import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, TextInpu
 import { AuthScreen, Notice, PrimaryButton, SecondaryButton, TextField, usePalette } from '@/components/auth-ui';
 import { Spacing } from '@/constants/theme';
 import {
+  addProduct,
   type AdminLocation,
+  type AdminProduct,
   type AdminStore,
   checkLocation,
   createStore,
@@ -15,9 +17,15 @@ import {
   imageUrl,
   type LocationFields,
   loadAdminStores,
+  MAX_MENU_PHOTOS,
+  MAX_PRODUCTS,
   MAX_VENUE_PHOTOS,
+  moveProduct,
+  removeProduct,
   removeStoreImage,
+  renameProduct,
   saveLocation,
+  setProductImage,
   setStoreImage,
   slugFor,
   type StoreFields,
@@ -182,83 +190,263 @@ function LocationEditor({ storeId, location, onChanged }: {
   );
 }
 
-function Photos({ store, onChanged }: { store: AdminStore; onChanged: () => void }) {
+async function pickImage() {
+  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 1 });
+  return result.canceled ? null : (result.assets?.[0]?.uri ?? null);
+}
+
+function Thumb({ path, shape, onRemove }: { path: string; shape: 'square' | 'wide' | 'tall'; onRemove: () => void }) {
   const colors = usePalette();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [status, setStatus] = useState<Status>(null);
-
-  const pick = async (kind: 'product' | 'venue') => {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 1 });
-    const asset = result.canceled ? null : result.assets?.[0];
-    if (!asset) return;
-    setBusy(kind);
-    setStatus(null);
-    const saved = await setStoreImage(store, asset.uri, kind);
-    setBusy(null);
-    if (saved.ok) onChanged();
-    else setStatus({ tone: 'error', title: 'NOT UPLOADED', text: saved.message });
-  };
-
-  const remove = (path: string) => {
-    Alert.alert('Remove this photo?', undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          const result = await removeStoreImage(store, path);
-          if (result.ok) onChanged();
-          else setStatus({ tone: 'error', title: 'NOT REMOVED', text: result.message });
-        },
-      },
-    ]);
-  };
-
-  const thumb = (path: string, wide: boolean) => (
-    <View key={path} style={[wide ? styles.venueThumb : styles.productThumb, { backgroundColor: colors.card }]}>
-      <Image source={{ uri: imageUrl(path) ?? undefined }} style={StyleSheet.absoluteFill} contentFit={wide ? 'cover' : 'contain'} />
+  return (
+    <View
+      style={[
+        shape === 'wide' ? styles.venueThumb : shape === 'tall' ? styles.menuThumb : styles.productThumb,
+        { backgroundColor: colors.card },
+      ]}>
+      <Image
+        source={{ uri: imageUrl(path) ?? undefined }}
+        style={StyleSheet.absoluteFill}
+        contentFit={shape === 'square' ? 'contain' : 'cover'}
+      />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Remove photo"
-        onPress={() => remove(path)}
+        onPress={onRemove}
         style={[styles.removeBadge, { backgroundColor: colors.hero }]}>
         <Text style={[styles.removeBadgeText, { color: colors.heroText }]}>✕</Text>
       </Pressable>
     </View>
   );
+}
+
+function confirmRemove(title: string, run: () => Promise<void>) {
+  Alert.alert(title, undefined, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Remove', style: 'destructive', onPress: () => void run() },
+  ]);
+}
+
+/** Logo, venue photos and menu photos. */
+function Media({ store, onChanged }: { store: AdminStore; onChanged: () => void }) {
+  const colors = usePalette();
+  const [busy, setBusy] = useState<'logo' | 'venue' | 'menu' | null>(null);
+  const [status, setStatus] = useState<Status>(null);
+
+  const add = async (kind: 'logo' | 'venue' | 'menu') => {
+    const uri = await pickImage();
+    if (!uri) return;
+    setBusy(kind);
+    setStatus(null);
+    const result = await setStoreImage(store, uri, kind);
+    setBusy(null);
+    if (result.ok) onChanged();
+    else setStatus({ tone: 'error', title: 'NOT UPLOADED', text: result.message });
+  };
+
+  const remove = (path: string) =>
+    confirmRemove('Remove this image?', async () => {
+      const result = await removeStoreImage(store, path);
+      if (result.ok) onChanged();
+      else setStatus({ tone: 'error', title: 'NOT REMOVED', text: result.message });
+    });
 
   return (
     <>
-      <SectionTitle>PRODUCT PHOTO</SectionTitle>
+      <SectionTitle>LOGO</SectionTitle>
       <Text style={[styles.hint, { color: colors.textMuted }]}>
-        A drink or dish on a transparent background (PNG). Shown on the Home cards.
+        Square, ideally a PNG with a transparent background. Shown on Find your ritual and the café page.
       </Text>
       <View style={styles.thumbRow}>
-        {store.product_image_path && thumb(store.product_image_path, false)}
-        {busy === 'product' && <ActivityIndicator />}
+        {store.logo_path && <Thumb path={store.logo_path} shape="square" onRemove={() => remove(store.logo_path!)} />}
+        {busy === 'logo' && <ActivityIndicator />}
       </View>
-      <SecondaryButton label={store.product_image_path ? 'REPLACE PRODUCT PHOTO' : 'CHOOSE PRODUCT PHOTO'} onPress={() => void pick('product')} />
+      <SecondaryButton label={store.logo_path ? 'REPLACE LOGO' : 'CHOOSE LOGO'} onPress={() => void add('logo')} />
 
       <SectionTitle>{`VENUE PHOTOS (${store.venue_image_paths.length}/${MAX_VENUE_PHOTOS})`}</SectionTitle>
       <Text style={[styles.hint, { color: colors.textMuted }]}>
         Storefront, interior or counter, landscape. Shown at the top of the café page.
       </Text>
       <View style={styles.thumbRow}>
-        {store.venue_image_paths.map((path) => thumb(path, true))}
+        {store.venue_image_paths.map((path) => (
+          <Thumb key={path} path={path} shape="wide" onRemove={() => remove(path)} />
+        ))}
         {busy === 'venue' && <ActivityIndicator />}
       </View>
       {store.venue_image_paths.length < MAX_VENUE_PHOTOS && (
-        <SecondaryButton label="ADD VENUE PHOTO" onPress={() => void pick('venue')} />
+        <SecondaryButton label="ADD VENUE PHOTO" onPress={() => void add('venue')} />
+      )}
+
+      <SectionTitle>{`MENU (${store.menu_image_paths.length}/${MAX_MENU_PHOTOS})`}</SectionTitle>
+      <Text style={[styles.hint, { color: colors.textMuted }]}>
+        A clear photo or screenshot of each menu page. Runners can open it full screen.
+      </Text>
+      <View style={styles.thumbRow}>
+        {store.menu_image_paths.map((path) => (
+          <Thumb key={path} path={path} shape="tall" onRemove={() => remove(path)} />
+        ))}
+        {busy === 'menu' && <ActivityIndicator />}
+      </View>
+      {store.menu_image_paths.length < MAX_MENU_PHOTOS && (
+        <SecondaryButton label="ADD MENU PAGE" onPress={() => void add('menu')} />
       )}
       <Text style={[styles.hint, { color: colors.textMuted }]}>
-        Only use photos the café has given you or approved.
+        Only use images the café has given you or approved.
       </Text>
       <StatusNotice status={status} />
     </>
   );
 }
 
-/** Add or edit a café / run club. Changes are checked by the database (admin + two-step). */
+function ProductRow({ store, product, index, onChanged }: {
+  store: AdminStore;
+  product: AdminProduct;
+  index: number;
+  onChanged: () => void;
+}) {
+  const colors = usePalette();
+  const [name, setName] = useState(product.name);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Status>(null);
+  const last = index === store.store_products.length - 1;
+
+  const run = async (action: () => Promise<{ ok: boolean; message?: string }>) => {
+    setBusy(true);
+    setStatus(null);
+    const result = await action();
+    setBusy(false);
+    if (result.ok) onChanged();
+    else setStatus({ tone: 'error', title: 'NOT SAVED', text: result.message ?? 'Please try again.' });
+  };
+
+  const changePhoto = async () => {
+    const uri = await pickImage();
+    if (uri) await run(() => setProductImage(store, product, uri));
+  };
+
+  return (
+    <View style={[styles.productCard, { backgroundColor: colors.surface }]}>
+      <View style={styles.productTop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={product.image_path ? 'Replace product photo' : 'Add product photo'}
+          onPress={() => void changePhoto()}
+          style={[styles.productThumb, { backgroundColor: colors.card }]}>
+          {product.image_path ? (
+            <Image source={{ uri: imageUrl(product.image_path) ?? undefined }} style={StyleSheet.absoluteFill} contentFit="contain" />
+          ) : (
+            <Text style={[styles.addPhotoText, { color: colors.textMuted }]}>+ Photo</Text>
+          )}
+          {busy && (
+            <View style={styles.busyOverlay}>
+              <ActivityIndicator />
+            </View>
+          )}
+        </Pressable>
+        <View style={styles.productInfo}>
+          <Text style={[styles.signatureLabel, { color: colors.textMuted }]}>
+            {index === 0 ? 'SIGNATURE · SHOWN ON HOME' : `#${index + 1}`}
+          </Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            onEndEditing={() => {
+              if (name.trim() && name.trim() !== product.name) void run(() => renameProduct(product, name));
+            }}
+            maxLength={60}
+            accessibilityLabel="Product name"
+            style={[styles.productNameInput, { color: colors.text, borderColor: colors.border }]}
+          />
+        </View>
+      </View>
+      <View style={styles.productActions}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={index === 0 || busy}
+          onPress={() => void run(() => moveProduct(store, product, -1))}
+          hitSlop={6}>
+          <Text style={[styles.productAction, { color: colors.text, opacity: index === 0 ? 0.3 : 1 }]}>↑ Up</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={last || busy}
+          onPress={() => void run(() => moveProduct(store, product, 1))}
+          hitSlop={6}>
+          <Text style={[styles.productAction, { color: colors.text, opacity: last ? 0.3 : 1 }]}>↓ Down</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => confirmRemove(`Remove “${product.name}”?`, () => run(() => removeProduct(product)))}
+          hitSlop={6}>
+          <Text style={[styles.productAction, styles.dangerText, { color: colors.textMuted }]}>Remove</Text>
+        </Pressable>
+      </View>
+      <StatusNotice status={status} />
+    </View>
+  );
+}
+
+/** The café's best products: name + photo, best first. */
+function Products({ store, onChanged }: { store: AdminStore; onChanged: () => void }) {
+  const colors = usePalette();
+  const [name, setName] = useState('');
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Status>(null);
+  const full = store.store_products.length >= MAX_PRODUCTS;
+
+  const add = async () => {
+    setBusy(true);
+    setStatus(null);
+    const result = await addProduct(store, name, photo);
+    setBusy(false);
+    if (!result.ok) {
+      setStatus({ tone: 'error', title: 'NOT ADDED', text: result.message });
+      return;
+    }
+    setName('');
+    setPhoto(null);
+    onChanged();
+  };
+
+  return (
+    <>
+      <SectionTitle>{`BEST PRODUCTS (${store.store_products.length}/${MAX_PRODUCTS})`}</SectionTitle>
+      <Text style={[styles.hint, { color: colors.textMuted }]}>
+        Just the highlights, not the whole menu. The first one is the café’s signature and appears on Home.
+        Photos work best as PNGs with a transparent background.
+      </Text>
+      {store.store_products.map((product, index) => (
+        <ProductRow key={product.id} store={store} product={product} index={index} onChanged={onChanged} />
+      ))}
+      {!full && (
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Add a product</Text>
+          <TextField label="Product name" value={name} onChangeText={setName} maxLength={60} placeholder="Iced matcha latte" />
+          <View style={styles.thumbRow}>
+            {photo && (
+              <View style={[styles.productThumb, { backgroundColor: colors.card }]}>
+                <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} contentFit="contain" />
+              </View>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              onPress={async () => setPhoto((await pickImage()) ?? photo)}
+              hitSlop={8}>
+              <Text style={[styles.productAction, { color: colors.text }]}>
+                {photo ? 'Change photo' : '+ Choose photo (optional)'}
+              </Text>
+            </Pressable>
+          </View>
+          <StatusNotice status={status} />
+          <PrimaryButton label="ADD PRODUCT" onPress={() => void add()} loading={busy} disabled={!name.trim()} />
+        </View>
+      )}
+    </>
+  );
+}
+
+/** Add or edit a café. Changes are checked by the database (admin + two-step). */
 export default function AdminStoreScreen() {
   const colors = usePalette();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -328,7 +516,6 @@ export default function AdminStoreScreen() {
     if (result.ok) void load();
   };
 
-  const isRunClub = fields.category === 'run-club';
 
   if (!isNew && !loading && !store) {
     return (
@@ -386,11 +573,11 @@ export default function AdminStoreScreen() {
             placeholder="A sentence or two from the café."
           />
           <TextField
-            label={isRunClub ? 'When they run (optional)' : 'Opening hours (optional)'}
+            label="Opening hours (optional)"
             value={fields.opening_hours ?? ''}
             onChangeText={(t) => set('opening_hours', t)}
             maxLength={120}
-            placeholder={isRunClub ? 'Saturdays 6:30, from the Sea Point pavilion' : 'Mon–Fri 6:30–16:00 · Sat 7:00–13:00'}
+            placeholder="Mon–Fri 6:30–16:00 · Sat 7:00–13:00"
           />
           <View style={[styles.switchRow, { borderColor: colors.border }]}>
             <View style={styles.rowText}>
@@ -421,7 +608,8 @@ export default function AdminStoreScreen() {
               ))}
               <LocationEditor key={`new-${store.store_locations.length}`} storeId={store.id} location={null} onChanged={() => void load()} />
 
-              <Photos store={store} onChanged={() => void load()} />
+              <Products store={store} onChanged={() => void load()} />
+              <Media store={store} onChanged={() => void load()} />
 
               <SecondaryButton
                 label="VIEW IN THE APP"
@@ -525,10 +713,65 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   productThumb: {
-    width: 96,
-    height: 96,
+    width: 88,
+    height: 88,
     borderRadius: 18,
     overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuThumb: {
+    width: 84,
+    height: 112,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  productCard: {
+    borderRadius: 22,
+    padding: 12,
+    gap: Spacing.two,
+  },
+  productTop: {
+    flexDirection: 'row',
+    gap: Spacing.three,
+    alignItems: 'center',
+  },
+  productInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  signatureLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+  },
+  productNameInput: {
+    fontSize: 16,
+    fontWeight: '600',
+    borderBottomWidth: 1,
+    paddingVertical: 6,
+  },
+  productActions: {
+    flexDirection: 'row',
+    gap: Spacing.four,
+  },
+  productAction: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  addPhotoText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  busyOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
   },
   venueThumb: {
     width: 128,

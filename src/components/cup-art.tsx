@@ -7,7 +7,6 @@ const DRINKS: Record<StoreCategory, { liquid: string; foam: string }> = {
   coffee: { liquid: '#7A4F33', foam: '#D9BC98' },
   matcha: { liquid: '#7FA548', foam: '#DDE9AC' },
   breakfast: { liquid: '#A9774F', foam: '#F1E2C8' },
-  'run-club': { liquid: '#5E3D29', foam: '#C9A27E' },
 };
 
 type CupArtProps = {

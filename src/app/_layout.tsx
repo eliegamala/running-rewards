@@ -39,7 +39,7 @@ export default function RootLayout() {
             <Stack.Screen name="strava-callback" />
             <Stack.Screen name="delete-account" />
             <Stack.Screen name="store/[id]" />
-            <Stack.Screen name="admin/index" />
+            <Stack.Screen name="admin" />
             <Stack.Screen name="admin/store/[id]" />
           </Stack.Protected>
         </Stack>

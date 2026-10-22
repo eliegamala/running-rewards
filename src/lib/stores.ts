@@ -11,7 +11,7 @@ import { AppState, type ImageSourcePropType } from 'react-native';
 import { readJson, writeJson } from '@/lib/local-json';
 import { supabase } from '@/lib/supabase';
 
-export type StoreCategory = 'coffee' | 'matcha' | 'breakfast' | 'run-club';
+export type StoreCategory = 'coffee' | 'matcha' | 'breakfast';
 
 export type StoreLocation = {
   /** Branch/area name shown to the runner, e.g. a neighbourhood. Null until known. */
@@ -27,6 +27,13 @@ export type StoreLocation = {
 export const ADDRESS_COMING_SOON = 'Address coming soon';
 export const REWARD_TO_BE_CONFIRMED = 'Reward to be confirmed';
 
+/** One of the café's best items, shown on its page (the first is its signature). */
+export type StoreProduct = {
+  id: string;
+  name: string;
+  imageUrl: string | null;
+};
+
 export type Store = {
   id: string;
   name: string;
@@ -35,11 +42,15 @@ export type Store = {
   reward: string;
   rewardConfirmed: boolean;
   description: string | null;
-  /** Product cut-out (transparent PNG). Stores without one use the cup illustration. */
-  productImageUrl: string | null;
+  /** The café's logo (Find your ritual, café page). */
+  logoUrl: string | null;
+  /** Featured products, best first. */
+  products: StoreProduct[];
   /** Up to three venue photos for the café page. */
   venueImageUrls: string[];
-  /** Free text from the café, e.g. "Mon–Fri 6:30–16:00" (or when a run club meets). */
+  /** Up to three photos of the menu. */
+  menuImageUrls: string[];
+  /** Free text from the café, e.g. "Mon–Fri 6:30–16:00". */
   openingHours: string | null;
   /** Where the reward can be redeemed. Every store has at least one. */
   locations: StoreLocation[];
@@ -49,17 +60,15 @@ export const CATEGORIES: { id: StoreCategory; label: string; emoji: string }[] =
   { id: 'coffee', label: 'Coffee', emoji: '☕' },
   { id: 'matcha', label: 'Matcha', emoji: '🍵' },
   { id: 'breakfast', label: 'Breakfast', emoji: '🥐' },
-  { id: 'run-club', label: 'Run Clubs', emoji: '🏃' },
 ];
 
 export function getCategory(id: StoreCategory) {
   return CATEGORIES.find((category) => category.id === id) ?? CATEGORIES[0];
 }
 
-/** "1 spot", "3 spots"; run clubs are counted as clubs. */
-export function countLabel(category: StoreCategory, count: number) {
-  const noun = category === 'run-club' ? 'club' : 'spot';
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+/** "1 spot", "3 spots". */
+export function countLabel(count: number) {
+  return `${count} spot${count === 1 ? '' : 's'}`;
 }
 
 /**
@@ -71,9 +80,15 @@ const STAND_IN_PRODUCT_IMAGES: ImageSourcePropType[] = [
   require('@/assets/images/products/matcha-latte.png'),
 ];
 
-/** The store's own product photo, else a stand-in picked consistently per store. */
+/** The café's signature product (its first featured product), if it has one. */
+export function signatureProduct(store: Store): StoreProduct | null {
+  return store.products[0] ?? null;
+}
+
+/** The signature product's photo, else a stand-in picked consistently per store. */
 export function productImageFor(store: Store): ImageSourcePropType {
-  if (store.productImageUrl) return { uri: store.productImageUrl };
+  const photo = store.products.find((product) => product.imageUrl)?.imageUrl;
+  if (photo) return { uri: photo };
   let hash = 0;
   for (const char of store.id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   return STAND_IN_PRODUCT_IMAGES[Math.abs(hash) % STAND_IN_PRODUCT_IMAGES.length];
@@ -119,7 +134,7 @@ export type StoresState = {
   status: 'loading' | 'ready' | 'error';
 };
 
-const CACHE_NAME = 'stores-cache';
+const CACHE_NAME = 'stores-cache-v2';
 const IMAGE_BUCKET = 'store-images';
 const REFRESH_EVERY_MS = 10 * 60 * 1000;
 
@@ -165,8 +180,10 @@ export function unlistedStore(id: string): Store {
     reward: REWARD_TO_BE_CONFIRMED,
     rewardConfirmed: false,
     description: null,
-    productImageUrl: null,
+    logoUrl: null,
+    products: [],
     venueImageUrls: [],
+    menuImageUrls: [],
     openingHours: null,
     locations: [],
   };
@@ -199,10 +216,12 @@ type StoreRow = {
   category: string;
   reward: string | null;
   description: string | null;
-  product_image_path: string | null;
+  logo_path: string | null;
   venue_image_paths: string[] | null;
+  menu_image_paths: string[] | null;
   opening_hours: string | null;
   sort_order: number;
+  store_products: { id: string; name: string; image_path: string | null; sort_order: number }[] | null;
   store_locations:
     | {
         name: string | null;
@@ -225,8 +244,12 @@ export function toStore(row: StoreRow, publicUrl: (path: string) => string): Sto
     reward: row.reward ?? REWARD_TO_BE_CONFIRMED,
     rewardConfirmed: row.reward !== null,
     description: row.description,
-    productImageUrl: row.product_image_path ? publicUrl(row.product_image_path) : null,
+    logoUrl: row.logo_path ? publicUrl(row.logo_path) : null,
+    products: [...(row.store_products ?? [])]
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((p) => ({ id: p.id, name: p.name, imageUrl: p.image_path ? publicUrl(p.image_path) : null })),
     venueImageUrls: (row.venue_image_paths ?? []).slice(0, 3).map(publicUrl),
+    menuImageUrls: (row.menu_image_paths ?? []).slice(0, 3).map(publicUrl),
     openingHours: row.opening_hours ?? null,
     locations: [...(row.store_locations ?? [])]
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -256,7 +279,8 @@ export function refreshStores({ force = false }: { force?: boolean } = {}): Prom
       const { data, error } = await client
         .from('stores')
         .select(
-          'id, name, category, reward, description, product_image_path, venue_image_paths, opening_hours, sort_order, ' +
+          'id, name, category, reward, description, logo_path, venue_image_paths, menu_image_paths, opening_hours, sort_order, ' +
+            'store_products (id, name, image_path, sort_order), ' +
             'store_locations (name, address, google_maps_url, latitude, longitude, sort_order)',
         )
         .order('sort_order')

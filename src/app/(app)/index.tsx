@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CupArt } from '@/components/cup-art';
 import { ProfileAvatar } from '@/components/profile-avatar';
+import { StoreLogo } from '@/components/store-logo';
 import { Fonts, Palette, type PaletteColors, Spacing } from '@/constants/theme';
 import {
   formatClockTime,
@@ -38,6 +39,7 @@ import {
   getStore,
   getStoresState,
   productImageFor,
+  signatureProduct,
   type Store,
   type StoreCategory,
   subscribe as subscribeToStores,
@@ -175,6 +177,7 @@ type StoreCardProps = {
 
 function StoreCard({ store, width, dark, colors, showProductImage = false }: StoreCardProps) {
   const category = getCategory(store.category);
+  const signature = showProductImage ? signatureProduct(store) : null;
   const foreground = dark ? colors.heroText : colors.text;
   const muted = dark ? colors.heroMuted : colors.textMuted;
 
@@ -190,8 +193,8 @@ function StoreCard({ store, width, dark, colors, showProductImage = false }: Sto
         <Text style={[styles.storeName, { color: foreground }]} numberOfLines={1}>
           {store.name}
         </Text>
-        <Text style={[styles.storeCategory, { color: muted }]}>
-          {category.emoji} {category.label}
+        <Text style={[styles.storeCategory, { color: muted }]} numberOfLines={1}>
+          {signature ? signature.name : `${category.emoji} ${category.label}`}
         </Text>
 
         <View style={styles.storeArt}>
@@ -257,8 +260,8 @@ export default function HomeScreen() {
   const heroArtSize = heroWidth * 0.88;
   const cardWidth = Math.min(Math.round(width * 0.6), 280);
 
-  // Category tiles: two per row, sized to the screen.
-  const tileWidth = Math.floor((width - GUTTER * 2 - Spacing.two) / 2);
+  // Category tiles: one row of three, sized to the screen.
+  const tileWidth = Math.floor((width - GUTTER * 2 - Spacing.two * 2) / 3);
   const ritualCardWidth = Math.min(Math.round(width * 0.42), 190);
   // "Find your ritual": spots for the chosen craving, nearest first.
   const ritual = getCategory(selectedCategory);
@@ -497,7 +500,7 @@ export default function HomeScreen() {
                   key={category.id}
                   accessibilityRole="button"
                   accessibilityState={{ selected: isSelected, disabled: count === 0 }}
-                  accessibilityLabel={`${category.label}, ${count === 0 ? 'coming soon' : countLabel(category.id, count)}`}
+                  accessibilityLabel={`${category.label}, ${count === 0 ? 'coming soon' : countLabel(count)}`}
                   disabled={count === 0}
                   onPress={() => setSelectedCategory(category.id)}
                   style={({ pressed }) => [
@@ -510,7 +513,9 @@ export default function HomeScreen() {
                   <View>
                     <Text
                       style={[styles.tileLabel, { color: isSelected ? colors.heroText : colors.text }]}
-                      numberOfLines={1}>
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}>
                       {category.label}
                     </Text>
                     <Text
@@ -518,7 +523,7 @@ export default function HomeScreen() {
                         styles.tileCount,
                         { color: isSelected ? colors.heroMuted : colors.textMuted },
                       ]}>
-                      {count === 0 ? 'Coming soon' : countLabel(category.id, count)}
+                      {count === 0 ? 'Soon' : countLabel(count)}
                     </Text>
                   </View>
                 </Pressable>
@@ -573,14 +578,7 @@ export default function HomeScreen() {
                       { width: ritualCardWidth, backgroundColor: colors.surface },
                       pressed && styles.pressed,
                     ]}>
-                    <View style={[styles.ritualThumb, { backgroundColor: colors.card }]}>
-                      <Image
-                        source={productImageFor(store)}
-                        resizeMode="contain"
-                        accessibilityIgnoresInvertColors
-                        style={styles.ritualImage}
-                      />
-                    </View>
+                    <StoreLogo store={store} size={ritualCardWidth - 28} colors={colors} />
                     <Text style={[styles.ritualName, { color: colors.text }]} numberOfLines={2}>
                       {store.name}
                     </Text>
@@ -901,9 +899,9 @@ const styles = StyleSheet.create({
     marginTop: Spacing.three,
   },
   tile: {
-    borderRadius: 24,
-    padding: Spacing.three,
-    minHeight: 112,
+    borderRadius: 22,
+    padding: 12,
+    minHeight: 104,
     justifyContent: 'space-between',
   },
   tileSoon: {
@@ -913,7 +911,7 @@ const styles = StyleSheet.create({
     fontSize: 26,
   },
   tileLabel: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '600',
     marginTop: Spacing.two,
   },
@@ -942,17 +940,6 @@ const styles = StyleSheet.create({
   ritualCard: {
     borderRadius: 24,
     padding: 14,
-  },
-  ritualThumb: {
-    height: 96,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  ritualImage: {
-    width: 72,
-    height: 84,
   },
   ritualName: {
     fontSize: 16,

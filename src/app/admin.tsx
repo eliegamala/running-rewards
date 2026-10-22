@@ -44,8 +44,10 @@ const FIELD_LABELS: Record<string, string> = {
   opening_hours: 'hours',
   is_active: 'visibility',
   sort_order: 'order',
-  product_image_path: 'product photo',
+  logo_path: 'logo',
   venue_image_paths: 'venue photos',
+  menu_image_paths: 'menu',
+  image_path: 'product photo',
   address: 'address',
   google_maps_url: 'Maps link',
   latitude: 'coordinates',
@@ -71,6 +73,12 @@ function describeChange(entry: AuditEntry, storeNames: Map<string, string>) {
   const storeId =
     entry.table_name === 'stores' ? entry.record_id : String(changes.store_id ?? '');
   const name = storeNames.get(storeId) ?? (entry.table_name === 'stores' ? entry.record_id : 'a café');
+  if (entry.table_name === 'store_products') {
+    const product = typeof changes.name === 'string' ? ` “${changes.name}”` : '';
+    if (entry.action === 'insert') return `Added a product${product} to ${name}`;
+    if (entry.action === 'delete') return `Removed a product${product} from ${name}`;
+    return `Edited a product of ${name}`;
+  }
   if (entry.table_name === 'store_locations') {
     if (entry.action === 'insert') return `Added a location to ${name}`;
     if (entry.action === 'delete') return `Removed a location from ${name}`;
@@ -333,7 +341,7 @@ function Dashboard() {
       )}
 
       <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>CAFÉS & CLUBS</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>CAFÉS</Text>
         <Pressable
           accessibilityRole="button"
           onPress={() => router.push({ pathname: '/admin/store/[id]', params: { id: 'new' } })}
@@ -346,7 +354,8 @@ function Dashboard() {
         const missing = [
           !s.reward && 'reward',
           s.store_locations.length === 0 && 'address',
-          !s.product_image_path && 'product photo',
+          !s.logo_path && 'logo',
+          s.store_products.length === 0 && 'products',
           s.venue_image_paths.length === 0 && 'venue photos',
         ].filter(Boolean);
         return (
