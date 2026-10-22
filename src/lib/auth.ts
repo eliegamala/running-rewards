@@ -134,7 +134,8 @@ export function onBeforeLogOut(hook: () => Promise<void>) {
   };
 }
 
-export async function logOut() {
+/** `local` only ends the session on this phone (e.g. after the account was deleted). */
+export async function logOut({ scope = 'global' }: { scope?: 'global' | 'local' } = {}) {
   if (state.devPreview) {
     update({ devPreview: false });
     return;
@@ -146,7 +147,7 @@ export async function logOut() {
     new Promise((resolve) => setTimeout(resolve, 3000)),
   ]);
   try {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope });
   } finally {
     // Clear locally even if the network call fails, so the device is signed out.
     applySession(null);

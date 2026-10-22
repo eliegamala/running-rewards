@@ -311,6 +311,12 @@ function loadForUser(userId: string | null) {
   }
 }
 
+/** After an account is deleted: drop its cached rewards and unsent GPS claims from this phone. */
+export function forgetUserOnDevice(userId: string) {
+  if (readJson<Cache | null>(CACHE_NAME, null)?.userId === userId) deleteJson(CACHE_NAME);
+  saveClaims(claims.filter((c) => c.userId !== userId));
+}
+
 let lastUserId: string | null = signedInUserId();
 loadForUser(lastUserId);
 

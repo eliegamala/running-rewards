@@ -269,6 +269,15 @@ export default function ProfileScreen() {
           onPress={() => router.push('/strava')}
           colors={colors}
         />
+        {!auth.devPreview && (
+          <SettingRow
+            title="Delete account"
+            detail="Permanently delete your account and rewards"
+            action="Delete ›"
+            onPress={() => router.push('/delete-account')}
+            colors={colors}
+          />
+        )}
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>SETTINGS</Text>
         <SettingRow

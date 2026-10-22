@@ -37,6 +37,7 @@ export default function RootLayout() {
             <Stack.Screen name="(app)" />
             <Stack.Screen name="connect-strava" />
             <Stack.Screen name="strava-callback" />
+            <Stack.Screen name="delete-account" />
           </Stack.Protected>
         </Stack>
       )}
