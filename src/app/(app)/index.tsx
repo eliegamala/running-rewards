@@ -262,7 +262,8 @@ export default function HomeScreen() {
 
   // Category tiles: one row of three, sized to the screen.
   const tileWidth = Math.floor((width - GUTTER * 2 - Spacing.two * 2) / 3);
-  const ritualCardWidth = Math.min(Math.round(width * 0.42), 190);
+  // Compact cards: a small logo with the name, reward and distance.
+  const ritualCardWidth = Math.min(Math.round(width * 0.36), 150);
   // "Find your ritual": spots for the chosen craving, nearest first.
   const ritual = getCategory(selectedCategory);
   const ritualStores = sortByDistance(
@@ -578,7 +579,7 @@ export default function HomeScreen() {
                       { width: ritualCardWidth, backgroundColor: colors.surface },
                       pressed && styles.pressed,
                     ]}>
-                    <StoreLogo store={store} size={ritualCardWidth - 28} colors={colors} />
+                    <StoreLogo store={store} size={40} colors={colors} shape="circle" />
                     <Text style={[styles.ritualName, { color: colors.text }]} numberOfLines={2}>
                       {store.name}
                     </Text>
@@ -590,7 +591,7 @@ export default function HomeScreen() {
                         {metres !== null ? `📍 ${formatDistance(metres)}` : ' '}
                       </Text>
                       <View style={[styles.ritualArrow, { backgroundColor: colors.hero }]}>
-                        <Text style={[styles.arrow, { color: colors.heroText }]}>→</Text>
+                        <Text style={[styles.arrow, styles.ritualArrowText, { color: colors.heroText }]}>→</Text>
                       </View>
                     </View>
                   </Pressable>
@@ -938,18 +939,18 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   ritualCard: {
-    borderRadius: 24,
-    padding: 14,
+    borderRadius: 20,
+    padding: 12,
   },
   ritualName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    lineHeight: 20,
-    marginTop: Spacing.two,
+    lineHeight: 18,
+    marginTop: 10,
   },
   ritualReward: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     marginTop: 2,
   },
   ritualFooter: {
@@ -959,16 +960,19 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
   },
   ritualDistance: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   ritualArrow: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ritualArrowText: {
+    fontSize: 13,
   },
   ritualEmpty: {
     borderRadius: 24,
