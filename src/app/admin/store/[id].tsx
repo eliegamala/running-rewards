@@ -563,7 +563,7 @@ export default function AdminStoreScreen() {
             value={fields.reward ?? ''}
             onChangeText={(t) => set('reward', t)}
             maxLength={80}
-            placeholder="Free flat white"
+            placeholder="20% off any flat white"
           />
           <TextArea
             label="About (optional)"

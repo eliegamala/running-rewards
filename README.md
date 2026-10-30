@@ -1,6 +1,6 @@
 # running-rewards
 
-Mobile app where a 5 km run earns a free drink at a partner café. Runs come from the
+Mobile app where a 5 km run earns a discount at a partner café. Runs come from the
 built-in GPS tracker or from Strava. Rewards are issued and checked by the server,
 never by the app.
 
