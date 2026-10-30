@@ -15,7 +15,6 @@ Mac (iOS).
 ```bash
 git clone https://github.com/eliegamala/running-rewards.git
 cd running-rewards
-git checkout feature/auth-strava-rewards   # main is behind for now
 npm install
 cp .env.example .env.local
 ```
