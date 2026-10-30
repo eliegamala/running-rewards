@@ -1,56 +1,164 @@
-# Welcome to your Expo app 👋
+# running-rewards
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Mobile app where a 5 km run earns a free drink at a partner café. Runs come from the
+built-in GPS tracker or from Strava. Rewards are issued and checked by the server,
+never by the app.
 
-## Get started
+Stack: Expo SDK 58 (React Native 0.88, Expo Router), TypeScript, Supabase (Postgres,
+Auth, Storage, Edge Functions).
 
-1. Install dependencies
+## Setup
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+You need Node 22+ and git. For a device build: Android Studio (Android) or Xcode on a
+Mac (iOS).
 
 ```bash
-npm run reset-project
+git clone https://github.com/eliegamala/running-rewards.git
+cd running-rewards
+git checkout feature/auth-strava-rewards   # main is behind for now
+npm install
+cp .env.example .env.local
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Fill in `.env.local`. Ask the project owner for the values, or copy them from the
+Supabase dashboard (Project Settings → API Keys):
 
-### Other setup steps
+```
+EXPO_PUBLIC_SUPABASE_URL=
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Only the publishable key goes here. Never put a secret or service-role key in
+`.env.local`; everything prefixed `EXPO_PUBLIC_` ends up in the app bundle.
 
-## Learn more
+## Running
 
-To learn more about developing your project with Expo, look at the following resources:
+The app uses background location and push notifications, so use a development build:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npx expo run:android   # or: npx expo run:ios (Mac only)
+```
 
-## Join the community
+That builds and installs the app once. After that, just start the dev server:
 
-Join our community of developers creating universal apps.
+```bash
+npx expo start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Rebuild with `run:android` / `run:ios` whenever you add a package with native code or
+change `app.json`.
+
+Expo Go also works for most screens, but runs stop tracking when the screen locks and
+notifications won't arrive.
+
+Sign up in the app with any email to get an account. Everything runs against the shared
+Supabase project, so there is no local backend to start.
+
+### Testing rewards without running
+
+In development builds the RUN screen has a **DEV · Simulate 5 km** button. It generates
+a plausible 5 km route that the server accepts, so you can test the reward flow at your
+desk. It's hidden in release builds, but remove it before launch.
+
+## Before you push
+
+```bash
+npx tsc --noEmit
+npx expo lint
+```
+
+Both should pass with no errors.
+
+Install packages with `npx expo install <package>`, not `npm install <package>`. It
+picks the version that matches the SDK.
+
+## Project layout
+
+```
+src/
+  app/            Screens. Every file is a route (Expo Router); _layout.tsx files are navigators.
+    (app)/        Signed-in tabs: home, run, rewards, profile, strava, reward pass
+    admin/        Admin area (café editing, reward stats)
+  components/     Shared UI
+  hooks/
+  lib/            Non-UI logic
+    run-tracker.ts    GPS tracking and distance filtering
+    reward-credit.ts  Reward state, GPS route upload and reward claims
+    strava.ts         Strava connection and sync
+    stores.ts         Cafés
+    supabase.ts       Supabase client
+supabase/
+  migrations/     Database schema, RLS policies and reward rules (SQL)
+  functions/      Edge functions: strava, strava-callback, strava-webhook, delete-account
+docs/legal/       Privacy policy and terms
+```
+
+`ios/` and `android/` are generated and git-ignored. Don't edit them; configure native
+settings in `app.json`.
+
+## How rewards work
+
+The rules live in the database (`supabase/migrations`), not the app:
+
+- A run or walk of 5 km or more earns one reward. It's valid for 1 hour and is used once,
+  at one café.
+- Only your newest run can earn. Old runs, a first Strava sync or reconnecting Strava
+  never earn.
+- One active reward at a time.
+- GPS runs: when a run passes 5 km the app uploads the route and the server measures the
+  distance itself, using the same filtering as `run-tracker.ts`. If you change the
+  filtering on one side, change it on the other (`claim_gps_reward` in
+  `20261030120000_gps_route_check.sql`).
+- Strava runs come in through the webhook. Manual activities never count.
+
+## Backend work
+
+Only needed if you're changing the database or edge functions. Ask the project owner to
+invite you to the Supabase project first.
+
+```bash
+npx supabase login
+npx supabase link --project-ref dxwiggqimnyxyotjwaeu
+```
+
+**Database changes:** add a new file to `supabase/migrations/` named
+`YYYYMMDDHHMMSS_description.sql`. Never edit a migration that has already been applied.
+Then:
+
+```bash
+npx supabase migration list --linked   # see what's applied
+npx supabase db push --linked          # apply new migrations
+```
+
+There's no staging database yet, so `db push` changes the live project. Check with the
+team before pushing.
+
+**Edge functions:**
+
+```bash
+npx supabase functions deploy <name>
+```
+
+They read their secrets (Strava client ID/secret, token encryption key, webhook token)
+from Supabase. Those are already set on the project. To change them, use
+`supabase/.env.functions.local` (git-ignored, ask the owner) and
+`npx supabase secrets set --env-file supabase/.env.functions.local`. Don't change
+`STRAVA_TOKEN_ENCRYPTION_KEY`; stored Strava tokens become unreadable.
+
+## Admin access
+
+Admin accounts are listed in the `admins` table and need two-step login (set up in the
+app the first time you open the admin area). To make an account an admin, the owner
+runs this in the Supabase SQL editor:
+
+```sql
+insert into public.admins (user_id)
+select id from auth.users where email = 'someone@example.com';
+```
+
+## Known limitations
+
+- Strava limits how many athletes can connect until the API app is approved. If
+  connecting Strava fails for a new account, that's probably why.
+- Café product photos are placeholders for cafés that haven't sent their own.
+- No EAS build config yet, so builds are local only.
