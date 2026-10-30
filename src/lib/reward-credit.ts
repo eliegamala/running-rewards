@@ -8,7 +8,8 @@
  * This module only mirrors it:
  *   - reads the runner's credits (RLS: own rows only) and derives each status;
  *   - asks the server to select a store / redeem;
- *   - claims a reward for in-app GPS runs that pass 5 km (the server sanity-checks the claim).
+ *   - claims a reward for in-app GPS runs that pass 5 km: it uploads the run's GPS points and
+ *     the server measures the distance itself.
  * A small display cache shows the last known state on an offline launch; it can't grant
  * anything, because every action goes through the server.
  */
@@ -16,7 +17,12 @@ import { AppState } from 'react-native';
 
 import { getAuthState, subscribe as subscribeToAuth } from '@/lib/auth';
 import { deleteJson, readJson, writeJson } from '@/lib/local-json';
-import { getSnapshot as getRunSnapshot, subscribe as subscribeToRun } from '@/lib/run-tracker';
+import {
+  getRoute,
+  getSnapshot as getRunSnapshot,
+  type RoutePoint,
+  subscribe as subscribeToRun,
+} from '@/lib/run-tracker';
 import { supabase } from '@/lib/supabase';
 
 export const REWARD_DISTANCE_KM = 5;
@@ -215,16 +221,35 @@ export async function redeemReward(storeId: string): Promise<RewardActionResult>
 
 // ---- GPS runs: claim a reward from the server --------------------------------------------
 
-type PendingClaim = { userId: string; runId: string; startedAt: number; distanceMeters: number };
+type PendingClaim = {
+  userId: string;
+  runId: string;
+  startedAt: number;
+  distanceMeters: number;
+  /** The run's GPS points up to passing 5 km; the server measures the distance from these. */
+  route: RoutePoint[];
+  /** How many of `route` the server has already stored. */
+  uploaded: number;
+};
 
 /** The server rejects claims faster than 6 m/s on average; wait until a claim is plausible. */
 const MAX_SPEED_MPS = 6;
 const CLAIM_MARGIN_MS = 15 * 1000;
 const RETRY_MS = 30 * 1000;
+/** The server takes at most this many points per upload. */
+const UPLOAD_CHUNK = 500;
 /** Claims the server will never accept again are dropped. */
-const PERMANENT_REASONS = ['not_qualifying', 'not_recent', 'invalid_run'];
+const PERMANENT_REASONS = [
+  'not_qualifying',
+  'not_recent',
+  'invalid_run',
+  'invalid_route',
+  'implausible_route',
+  'mocked_location',
+];
 
-let claims = readJson<PendingClaim[]>(CLAIMS_NAME, []);
+// Claims saved by an older version carry no route and can never be accepted.
+let claims = readJson<PendingClaim[]>(CLAIMS_NAME, []).filter((c) => Array.isArray(c.route));
 const claimedRunIds = new Set(claims.map((c) => c.runId));
 let processingClaims = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -242,6 +267,31 @@ function scheduleClaims(delayMs: number) {
   }, Math.max(delayMs, 1000));
 }
 
+/** Sends the points the server doesn't have yet. Resumes where a failed attempt stopped. */
+async function uploadRoute(claim: PendingClaim) {
+  if (!supabase) return { message: 'network' };
+  let uploaded = claim.uploaded;
+  while (uploaded < claim.route.length) {
+    const chunk = claim.route.slice(uploaded, uploaded + UPLOAD_CHUNK);
+    const { error } = await supabase.rpc('upload_gps_points', {
+      p_run_id: claim.runId,
+      p_points: chunk.map((p) => ({
+        seq: p.seq,
+        segment: p.segment,
+        lat: p.latitude,
+        lon: p.longitude,
+        acc: p.accuracy,
+        t: p.timestamp,
+        mocked: p.mocked,
+      })),
+    });
+    if (error) return error;
+    uploaded += chunk.length;
+    saveClaims(claims.map((c) => (c.runId === claim.runId ? { ...c, uploaded } : c)));
+  }
+  return null;
+}
+
 async function processClaims() {
   const userId = signedInUserId();
   if (!supabase || !userId || processingClaims) return;
@@ -255,11 +305,11 @@ async function processClaims() {
         nextDelay = Math.min(nextDelay ?? Infinity, plausibleAt - Date.now());
         continue;
       }
-      const { data, error } = await supabase.rpc('claim_gps_reward', {
-        p_run_id: claim.runId,
-        p_distance_m: claim.distanceMeters,
-        p_started_at: new Date(claim.startedAt).toISOString(),
-      });
+      let data: unknown = null;
+      let error = await uploadRoute(claim);
+      if (!error) {
+        ({ data, error } = await supabase.rpc('claim_gps_reward', { p_run_id: claim.runId }));
+      }
       const message = error?.message ?? '';
       const permanent = PERMANENT_REASONS.some((reason) => message.includes(reason));
       if (!error || permanent) {
@@ -281,13 +331,22 @@ subscribeToRun(() => {
   const run = getRunSnapshot();
   const userId = signedInUserId();
   if (!userId || !run.isActive || run.startTime === null) return;
+  // A mock-location app was used: the server would refuse, so don't send anything.
+  if (run.mockedLocation) return;
   if (run.distanceMeters < REWARD_DISTANCE_KM * 1000) return;
   const runId = String(run.startTime);
   if (claimedRunIds.has(runId)) return;
   claimedRunIds.add(runId);
   saveClaims([
     ...claims,
-    { userId, runId, startedAt: run.startTime, distanceMeters: run.distanceMeters },
+    {
+      userId,
+      runId,
+      startedAt: run.startTime,
+      distanceMeters: run.distanceMeters,
+      route: [...getRoute()],
+      uploaded: 0,
+    },
   ]);
   void processClaims();
 });

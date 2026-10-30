@@ -203,6 +203,13 @@ export default function RunScreen() {
               colors={colors}
             />
           </View>
+
+          {run.mockedLocation && (
+            <Text style={[styles.notice, { color: colors.textMuted }]}>
+              {"A mock-location app is on, so this run can't earn a reward. Turn it off in " +
+                "your phone's developer settings to earn on your next run."}
+            </Text>
+          )}
         </View>
 
         {isRunning && (
@@ -296,6 +303,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     gap: Spacing.three,
+  },
+  notice: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
   },
   heroCard: {
     borderRadius: 32,

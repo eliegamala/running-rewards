@@ -8,6 +8,10 @@
  * Run states: ready (`!isActive`), running (`isActive && !isPaused`), paused
  * (`isActive && isPaused`), and finished (`!isActive` with an `endTime`).
  * While paused, GPS is switched off and no distance or time is counted.
+ *
+ * Every fix that's measured is also kept in the run's route, in the order it was processed,
+ * so the server can re-measure the run with the same rules (claim_gps_reward in
+ * supabase/migrations/20261030120000_gps_route_check.sql). Keep the two in step.
  */
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Location from 'expo-location';
@@ -26,6 +30,17 @@ type TrackPoint = {
   timestamp: number;
 };
 
+/** A measured fix, as sent to the server. */
+export type RoutePoint = TrackPoint & {
+  /** Position in the route, from 0. */
+  seq: number;
+  /** Starts at 0 and goes up on every resume; distance is never counted across segments. */
+  segment: number;
+  accuracy: number;
+  /** Android reports the fix came from a mock-location app. */
+  mocked: boolean;
+};
+
 export type RunSnapshot = {
   /** True from start until stop, including while paused. */
   isActive: boolean;
@@ -40,6 +55,8 @@ export type RunSnapshot = {
   trackingSince: number | null;
   distanceMeters: number;
   lastPoint: TrackPoint | null;
+  /** A mock-location app was detected; this run can't earn a reward. */
+  mockedLocation: boolean;
 };
 
 let snapshot: RunSnapshot = {
@@ -52,7 +69,11 @@ let snapshot: RunSnapshot = {
   trackingSince: null,
   distanceMeters: 0,
   lastPoint: null,
+  mockedLocation: false,
 };
+// Kept outside the snapshot so adding a point doesn't copy the whole route.
+let route: RoutePoint[] = [];
+let segment = 0;
 const listeners = new Set<() => void>();
 let foregroundSubscription: Location.LocationSubscription | null = null;
 
@@ -70,6 +91,11 @@ export function subscribe(listener: () => void) {
 
 export function getSnapshot() {
   return snapshot;
+}
+
+/** The current (or last) run's measured fixes, oldest first. */
+export function getRoute(): readonly RoutePoint[] {
+  return route;
 }
 
 /** Running time so far, excluding pauses. Frozen while paused and after the run ends. */
@@ -95,7 +121,7 @@ function distanceBetween(a: TrackPoint, b: TrackPoint) {
 function addLocations(locations: Location.LocationObject[]) {
   if (!snapshot.isActive || snapshot.isPaused || snapshot.trackingSince === null) return;
 
-  let { distanceMeters, lastPoint } = snapshot;
+  let { distanceMeters, lastPoint, mockedLocation } = snapshot;
 
   for (const location of locations) {
     const { latitude, longitude, accuracy } = location.coords;
@@ -105,6 +131,12 @@ function addLocations(locations: Location.LocationObject[]) {
     if (location.timestamp < snapshot.trackingSince) continue;
 
     const point = { latitude, longitude, timestamp: location.timestamp };
+    const mocked = location.mocked === true;
+    route.push({ ...point, seq: route.length, segment, accuracy, mocked });
+    if (mocked) {
+      mockedLocation = true;
+      continue;
+    }
     if (!lastPoint) {
       lastPoint = point;
       continue;
@@ -122,8 +154,12 @@ function addLocations(locations: Location.LocationObject[]) {
     lastPoint = point;
   }
 
-  if (distanceMeters !== snapshot.distanceMeters || lastPoint !== snapshot.lastPoint) {
-    update({ distanceMeters, lastPoint });
+  if (
+    distanceMeters !== snapshot.distanceMeters ||
+    lastPoint !== snapshot.lastPoint ||
+    mockedLocation !== snapshot.mockedLocation
+  ) {
+    update({ distanceMeters, lastPoint, mockedLocation });
   }
 }
 
@@ -202,6 +238,8 @@ export async function startRun() {
   await stopRun();
 
   const now = Date.now();
+  route = [];
+  segment = 0;
   update({
     isActive: true,
     isPaused: false,
@@ -212,6 +250,7 @@ export async function startRun() {
     trackingSince: now,
     distanceMeters: 0,
     lastPoint: null,
+    mockedLocation: false,
   });
 
   try {
@@ -239,6 +278,7 @@ export async function pauseRun() {
 export async function resumeRun() {
   if (!snapshot.isActive || !snapshot.isPaused || snapshot.pausedAt === null) return;
   const now = Date.now();
+  segment += 1;
   update({
     isPaused: false,
     pausedAt: null,
@@ -285,13 +325,50 @@ export async function stopOrphanedTracking() {
  * TEMPORARY, DEV ONLY: adds distance to the active run so the reward flow can be
  * tested without running. Remove before release.
  *
- * The server rejects 5 km+ claims faster than a human can run, so the run's start is moved
- * back as if it had been run at 5 m/s; the reward then unlocks instantly, like a real run.
+ * The server re-measures the route and rejects 5 km+ faster than a human can run, so this
+ * moves the whole run back in time and fills the gap with fixes heading north at 5 m/s,
+ * fed through the same filtering as real GPS. The reward then unlocks instantly. Real GPS
+ * carries on in a new segment, as after a pause, so the jump back isn't counted.
  */
 export function simulateDistanceForTesting(meters: number) {
   // Only running distance counts, so this does nothing while paused.
   if (!__DEV__ || !snapshot.isActive || snapshot.isPaused || snapshot.startTime === null) return;
-  const distanceMeters = snapshot.distanceMeters + meters;
-  const plausibleStart = Date.now() - Math.ceil((distanceMeters / 5) * 1000);
-  update({ distanceMeters, startTime: Math.min(snapshot.startTime, plausibleStart) });
+  const STEP_M = 10;
+  const STEP_MS = 2000;
+  const steps = Math.ceil(meters / STEP_M);
+  const shiftMs = steps * STEP_MS + 1000;
+
+  route = route.map((p) => ({ ...p, timestamp: p.timestamp - shiftMs }));
+  // Continue from the last fix, already in the route; with no fix yet (e.g. a simulator),
+  // start a fresh segment in Cape Town.
+  const hadFix = snapshot.lastPoint !== null;
+  const from = snapshot.lastPoint ?? { latitude: -33.9249, longitude: 18.4241, timestamp: Date.now() };
+  const anchor = { ...from, timestamp: from.timestamp - shiftMs };
+  update({
+    startTime: snapshot.startTime - shiftMs,
+    trackingSince: Math.min(snapshot.trackingSince ?? anchor.timestamp, anchor.timestamp),
+    lastPoint: hadFix ? anchor : null,
+  });
+
+  const degreesPerStep = STEP_M / 111195; // metres per degree of latitude
+  const fixes: Location.LocationObject[] = [];
+  for (let i = hadFix ? 1 : 0; i <= steps; i++) {
+    fixes.push({
+      timestamp: anchor.timestamp + i * STEP_MS,
+      mocked: false,
+      coords: {
+        latitude: anchor.latitude + i * degreesPerStep,
+        longitude: anchor.longitude,
+        accuracy: 5,
+        altitude: null,
+        altitudeAccuracy: null,
+        heading: null,
+        speed: null,
+      },
+    });
+  }
+  addLocations(fixes);
+
+  segment += 1;
+  update({ lastPoint: null });
 }
