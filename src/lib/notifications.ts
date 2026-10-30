@@ -83,6 +83,8 @@ async function ensureChannel() {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
     name: 'Rewards',
+    // eslint-plugin-import can't read this enum in expo-notifications 58's build; it is exported.
+    // eslint-disable-next-line import/namespace
     importance: Notifications.AndroidImportance.HIGH,
   });
 }

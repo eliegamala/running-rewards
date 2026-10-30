@@ -1,6 +1,6 @@
 import { usePathname } from 'expo-router';
 import { TabList, Tabs, TabSlot, TabTrigger, type TabTriggerSlotProps } from 'expo-router/ui';
-import { useSyncExternalStore } from 'react';
+import { type ComponentRef, type Ref, useSyncExternalStore } from 'react';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -24,11 +24,17 @@ function TabButton({
   colors,
   showDot,
   forceFocused,
+  ref,
   ...props
 }: TabButtonProps) {
   const isFocused = isTabFocused || forceFocused;
   return (
-    <Pressable {...props} style={({ pressed }) => [styles.tab, pressed && styles.pressed]}>
+    <Pressable
+      {...props}
+      // expo-router types this ref as `View` (the component); with React Native 0.88's
+      // stricter types the Pressable expects its instance type. Same object at runtime.
+      ref={ref as Ref<ComponentRef<typeof Pressable>>}
+      style={({ pressed }) => [styles.tab, pressed && styles.pressed]}>
       <View style={[styles.tabPill, isFocused && { backgroundColor: colors.hero }]}>
         {showDot && <View style={[styles.dot, { backgroundColor: colors.accent }]} />}
         <Text style={[styles.tabLabel, { color: isFocused ? colors.heroText : colors.textMuted }]}>

@@ -22,7 +22,7 @@ export function writeJson(name: string, data: unknown) {
   try {
     const file = fileFor(name);
     if (!file.exists) file.create();
-    file.write(JSON.stringify(data));
+    file.writeSync(JSON.stringify(data));
   } catch {
     // Keep running with in-memory data if the write fails.
   }

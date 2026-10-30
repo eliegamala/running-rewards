@@ -6,7 +6,7 @@
  * is handled separately in `reward-credit.ts`. A store has one or more physical locations.
  * Unknown details are left empty, never guessed.
  */
-import { AppState, type ImageSourcePropType } from 'react-native';
+import { AppState } from 'react-native';
 
 import { readJson, writeJson } from '@/lib/local-json';
 import { supabase } from '@/lib/supabase';
@@ -75,7 +75,7 @@ export function countLabel(count: number) {
  * TEST STAND-INS: the matcha photos supplied earlier (they carry Starbucks and Platō
  * branding). Shown only for stores without their own product photo, until cafés send theirs.
  */
-const STAND_IN_PRODUCT_IMAGES: ImageSourcePropType[] = [
+const STAND_IN_PRODUCT_IMAGES: number[] = [
   require('@/assets/images/products/plato-matcha.png'),
   require('@/assets/images/products/matcha-latte.png'),
 ];
@@ -86,7 +86,7 @@ export function signatureProduct(store: Store): StoreProduct | null {
 }
 
 /** The signature product's photo, else a stand-in picked consistently per store. */
-export function productImageFor(store: Store): ImageSourcePropType {
+export function productImageFor(store: Store): number | { uri: string } {
   const photo = store.products.find((product) => product.imageUrl)?.imageUrl;
   if (photo) return { uri: photo };
   let hash = 0;
