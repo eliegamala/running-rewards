@@ -1,164 +1,137 @@
 # running-rewards
 
-## What is this?
-
 A phone app that rewards runners. Run 5 km and you earn a discount at a partner café.
 
-- You can track your run in the app, or connect Strava.
-- When you pass 5 km, you get a reward. It lasts 1 hour.
-- You pick a café, show the reward to the staff, and get your discount.
+You can track your run in the app or connect Strava. When you pass 5 km you get a
+reward that lasts 1 hour. You pick a café, show the reward to the staff and get your
+discount.
 
-The app is built with **Expo** (React Native). The backend is **Supabase**: it holds the
-accounts, the cafés and the rewards. The server decides who earns a reward, not the app.
+The app is built with Expo (React Native). Accounts, cafés and rewards are stored in
+Supabase.
 
 ## Set up
 
-### Step 1: Install the tools
+Follow these steps in order. You only do this once.
 
-- [Node.js](https://nodejs.org) version 22 or newer
-- [Git](https://git-scm.com)
-- To run the app on Android: [Android Studio](https://developer.android.com/studio)
-- To run the app on iPhone: a Mac with Xcode
+### 1. Install the programs on your computer
 
-### Step 2: Get the code
+- **VS Code:** download it from [code.visualstudio.com](https://code.visualstudio.com) and install it.
+- **Node.js:** download the **LTS** version from [nodejs.org](https://nodejs.org) and install it.
+- **Git:** download it from [git-scm.com](https://git-scm.com) and install it. The default options are fine.
+
+Restart your computer after installing.
+
+### 2. Install Expo Go on your phone
+
+- iPhone: get **Expo Go** from the App Store.
+- Android: get **Expo Go** from the Play Store.
+
+Open Expo Go and log in with your Expo account. If you don't have one, sign up for
+free at [expo.dev](https://expo.dev).
+
+### 3. Get the code from GitHub
+
+You need an invite to the GitHub project first. Ask the project owner.
+
+1. Open VS Code.
+2. Click **Clone Git Repository** on the start screen. (Or press `Ctrl+Shift+P` and type
+   `Git: Clone`.)
+3. Paste this link and press Enter:
+   ```
+   https://github.com/eliegamala/running-rewards.git
+   ```
+4. Pick a folder to save it in.
+5. Click **Open** when VS Code asks.
+
+### 4. Install the project
+
+1. In VS Code, open the terminal: **Terminal → New Terminal**.
+2. Type this and press Enter:
+   ```bash
+   npm install
+   ```
+3. Wait until it finishes. It can take a few minutes.
+
+### 5. Add the settings file
+
+The app needs two settings to connect to the database.
+
+1. In VS Code, click **File → New File**.
+2. Paste in these two lines:
+   ```
+   EXPO_PUBLIC_SUPABASE_URL=
+   EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+   ```
+3. Ask the project owner for the two values and paste them after the `=` signs.
+4. Save the file in the main project folder with the name `.env.local` (it starts with
+   a dot).
+
+This file stays on your computer. It is never uploaded to GitHub.
+
+### 6. Log in to Expo on your computer
+
+In the VS Code terminal, type:
 
 ```bash
-git clone https://github.com/eliegamala/running-rewards.git
-cd running-rewards
-npm install
+npx expo login
 ```
 
-### Step 3: Add the settings file
+Use the same Expo account as on your phone.
 
-Make a copy of the example file:
+### 7. Start the app
 
-```bash
-cp .env.example .env.local
-```
-
-Open `.env.local` and fill in the two values. Ask the project owner for them.
-
-```
-EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-```
-
-Only put these two values here. Never put a secret key in this file, because it gets
-built into the app.
-
-### Step 4: Build the app on your phone
-
-Plug in your phone (or start an emulator), then run:
-
-```bash
-npx expo run:android
-```
-
-On a Mac, use `npx expo run:ios` for iPhone.
-
-This takes a few minutes the first time. You only need to do it again when you add a
-new package or change `app.json`.
-
-### Step 5: Start the app
+In the terminal, type:
 
 ```bash
 npx expo start
 ```
 
-Open the app on your phone. It connects to the dev server.
+A QR code shows up in the terminal.
 
-### Step 6: Make an account
+- **iPhone:** open the Camera app and point it at the QR code.
+- **Android:** open Expo Go and tap **Scan QR code**.
 
-Sign up in the app with your email. You're ready.
+The app opens on your phone. Sign up with your email and you're in.
+
+## Every day after that
+
+Open the project in VS Code, open the terminal and type:
+
+```bash
+npx expo start
+```
+
+Then open the app in Expo Go on your phone. When you save a file in VS Code, the app
+updates on your phone by itself.
+
+To get the latest code from the team, click the **Source Control** icon on the left in
+VS Code and click **Sync Changes**. Or type `git pull` in the terminal.
+
+## If something doesn't work
+
+- **The phone can't connect:** make sure your phone and computer are on the same Wi-Fi.
+  If it still doesn't work, stop the app with `Ctrl+C` and start it with
+  `npx expo start --tunnel`.
+- **Strange errors after getting new code:** run `npm install` again, then
+  `npx expo start --clear`.
+- **The app says it can't connect to the server:** check your `.env.local` file. The
+  name and the two values must be exactly right.
 
 ## Test a reward without running
 
-On the RUN screen, start a run and tap **DEV · Simulate 5 km**. It adds a fake 5 km
-route and you get a reward straight away. This button only shows in development builds.
+Start a run on the RUN screen and tap **DEV · Simulate 5 km**. You get a reward
+straight away.
 
-## Before you push code
+Good to know: in Expo Go, the run stops tracking when your screen locks, and
+notifications don't arrive. Everything else works.
 
-Run these two checks. Both must pass.
+## Before you share your code
+
+Run these two checks in the terminal. Both must finish with no errors.
 
 ```bash
 npx tsc --noEmit
 npx expo lint
 ```
 
-To add a package, use `npx expo install <package>`, not `npm install`. It picks the
-right version for this Expo version.
-
-## Where things are
-
-| Folder | What's in it |
-|---|---|
-| `src/app/` | The screens. Each file is a page in the app. |
-| `src/components/` | Buttons, cards and other shared pieces |
-| `src/lib/` | The logic: run tracking, rewards, Strava, cafés |
-| `supabase/migrations/` | The database: tables and reward rules |
-| `supabase/functions/` | Server code for Strava and account deletion |
-| `docs/legal/` | Privacy policy and terms |
-
-Don't create or edit `ios/` or `android/` folders. They are made for you when you
-build.
-
-## The reward rules
-
-These rules are checked by the database, so they can't be skipped from the app.
-
-1. A run or walk of 5 km or more earns one reward.
-2. Only your newest run counts. Old runs never earn.
-3. You can only have one reward at a time.
-4. A reward lasts 1 hour and works at one café, once.
-5. For runs tracked in the app, the server checks the GPS route and measures the
-   distance itself.
-
-If you change how the app measures distance (`src/lib/run-tracker.ts`), make the same
-change on the server (`supabase/migrations/20261030120000_gps_route_check.sql`).
-
-## Working on the backend
-
-You only need this if you change the database or the server code. Ask the project owner
-to add you to the Supabase project first.
-
-Connect to the project:
-
-```bash
-npx supabase login
-npx supabase link --project-ref dxwiggqimnyxyotjwaeu
-```
-
-**To change the database:** add a new file in `supabase/migrations/`. Don't edit old
-files. Then run:
-
-```bash
-npx supabase db push --linked
-```
-
-Be careful: there's only one database, and it's the live one. Talk to the team before
-you push.
-
-**To update server code:**
-
-```bash
-npx supabase functions deploy <name>
-```
-
-## Admin access
-
-The admin area lets you edit cafés and see reward numbers. To make someone an admin,
-the project owner runs this in the Supabase SQL editor:
-
-```sql
-insert into public.admins (user_id)
-select id from auth.users where email = 'someone@example.com';
-```
-
-The first time they open the admin area, the app asks them to set up two-step login.
-
-## Known issues
-
-- Strava only lets a few people connect until our Strava app is approved. If connecting
-  Strava fails, that's probably why.
-- Some cafés show placeholder product photos.
-- There's no cloud build setup (EAS) yet. Builds only run on your own computer.
+To add a new package, use `npx expo install <package-name>`, not `npm install`.
